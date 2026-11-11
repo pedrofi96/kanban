@@ -1,0 +1,50 @@
+{% load static %}<!doctype html>
+<html lang="pt-BR" class="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block titulo %}Kanban PMS{% endblock %}</title>
+
+  <script>
+    // Aplica o tema antes de pintar a página (evita "piscar" em claro).
+    try { if (localStorage.getItem("kanban.tema") === "light") document.documentElement.classList.remove("dark"); } catch {}
+    function alternarTema() {
+      const escuro = document.documentElement.classList.toggle("dark");
+      try { localStorage.setItem("kanban.tema", escuro ? "dark" : "light"); } catch {}
+    }
+  </script>
+  <script src="https://cdn.tailwindcss.com/3.4.16"></script>
+  <script>
+    tailwind.config = {
+      darkMode: "class",
+      theme: { extend: { fontFamily: { sans: ["Inter", "ui-sans-serif", "system-ui", "sans-serif"] } } },
+    };
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <style>
+    [x-cloak] { display: none !important; }
+    .rolagem::-webkit-scrollbar { height: 10px; width: 8px; }
+    .rolagem::-webkit-scrollbar-thumb { background: rgb(100 116 139 / .35); border-radius: 9999px; }
+    .rolagem::-webkit-scrollbar-track { background: transparent; }
+  </style>
+  {% block head %}{% endblock %}
+
+  {# Scripts da página entram ANTES do Alpine (precisam registrar o alpine:init). #}
+  {% block scripts %}{% endblock %}
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"></script>
+</head>
+
+<body {% block body_attrs %}class="min-h-screen bg-slate-100 text-slate-800 antialiased dark:bg-slate-950 dark:text-slate-200"{% endblock %}>
+
+{% block corpo %}
+  {% include "_navbar.html" %}
+  <main class="mx-auto w-full max-w-6xl px-4 py-8 sm:px-6">
+    {% block conteudo %}{% endblock %}
+  </main>
+{% endblock %}
+
+{% include "_mensagens.html" %}
+</body>
+</html>

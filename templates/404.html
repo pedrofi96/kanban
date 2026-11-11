@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block titulo %}Não encontrado · Kanban PMS{% endblock %}
+{% block conteudo %}
+<div class="mx-auto max-w-md py-16 text-center">
+  <p class="text-6xl font-bold text-indigo-500">404</p>
+  <h1 class="mt-2 text-2xl font-bold tracking-tight">Página não encontrada</h1>
+  <p class="mt-2 text-slate-500 dark:text-slate-400">O endereço pode estar errado ou o item foi removido.</p>
+  <a href="{% url 'index' %}" class="mt-6 inline-block rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500">Voltar aos quadros</a>
+</div>
+{% endblock %}

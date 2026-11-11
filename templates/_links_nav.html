@@ -1,0 +1,19 @@
+{# Links principais (Quadros, Projetos, Usuários, Andares, Convites). Usado na barra das telas de gestão e no quadro. #}
+{% if user.is_authenticated and not user.deve_trocar_senha %}
+{% with atual=request.resolver_match.url_name ativo="bg-slate-900 text-white dark:bg-slate-700" inativo="text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800" %}
+<nav class="flex items-center gap-1 text-sm">
+  <a href="{% url 'index' %}" class="rounded-lg px-3 py-1.5 transition {% if atual == 'index' %}{{ ativo }}{% else %}{{ inativo }}{% endif %}">Quadros</a>
+  <a href="{% url 'projetos' %}" class="rounded-lg px-3 py-1.5 transition {% if atual == 'projetos' or atual == 'projeto_detalhe' %}{{ ativo }}{% else %}{{ inativo }}{% endif %}">Projetos</a>
+  {% if user.is_administrador %}
+    <a href="{% url 'usuarios_lista' %}" class="rounded-lg px-3 py-1.5 transition {% if atual == 'usuarios_lista' or atual == 'usuario_detalhe' or atual == 'usuario_criar' %}{{ ativo }}{% else %}{{ inativo }}{% endif %}">Usuários</a>
+    <a href="{% url 'andares' %}" class="rounded-lg px-3 py-1.5 transition {% if atual == 'andares' %}{{ ativo }}{% else %}{{ inativo }}{% endif %}">Andares</a>
+  {% endif %}
+  {% if user.is_admin_andar %}
+    <a href="{% url 'convites' %}" class="rounded-lg px-3 py-1.5 transition {% if atual == 'convites' %}{{ ativo }}{% else %}{{ inativo }}{% endif %}">
+      Convites
+      {% if convites_pendentes %}<span class="ml-1 rounded-full bg-indigo-600 px-1.5 text-[11px] font-semibold text-white">{{ convites_pendentes }}</span>{% endif %}
+    </a>
+  {% endif %}
+</nav>
+{% endwith %}
+{% endif %}

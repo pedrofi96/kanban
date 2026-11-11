@@ -1,0 +1,10 @@
+{# Uso: {% include "_cargo.html" with u=usuario %} #}
+{% if u.is_superuser %}
+  <span class="inline-flex rounded-md bg-slate-500/15 px-2 py-0.5 text-[11px] font-semibold text-slate-500 ring-1 ring-inset ring-slate-500/30">Dev</span>
+{% elif u.is_admin_geral %}
+  <span class="inline-flex rounded-md bg-indigo-500/15 px-2 py-0.5 text-[11px] font-semibold text-indigo-400 ring-1 ring-inset ring-indigo-500/30">Admin geral</span>
+{% elif u.is_admin_andar %}
+  <span class="inline-flex rounded-md bg-sky-500/15 px-2 py-0.5 text-[11px] font-semibold text-sky-400 ring-1 ring-inset ring-sky-500/30">Admin do andar</span>
+{% else %}
+  <span class="inline-flex rounded-md bg-slate-500/10 px-2 py-0.5 text-[11px] font-semibold text-slate-500 ring-1 ring-inset ring-slate-500/20 dark:text-slate-400">Usuário</span>
+{% endif %}

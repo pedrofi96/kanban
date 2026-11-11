@@ -1,0 +1,455 @@
+{% extends "base.html" %}
+{% load static %}
+{% block titulo %}Quadros · Kanban PMS{% endblock %}
+
+{% block head %}
+  <style>
+    /* Drag-and-drop */
+    .card-fantasma { opacity: .35; border-style: dashed !important; }
+    .card-fantasma > * { visibility: hidden; }
+    .card-arrastado { transform: rotate(3deg) scale(1.03); box-shadow: 0 20px 40px -10px rgb(0 0 0 / .5); opacity: 1 !important; cursor: grabbing; }
+    .kanban-card { transition: transform .15s ease, box-shadow .15s ease, border-color .15s ease; user-select: none; }
+    /* Enquanto um card é arrastado, nada na página pode ser selecionado */
+    body.arrastando-card, body.arrastando-card * { user-select: none !important; -webkit-user-select: none !important; cursor: grabbing !important; }
+  </style>
+{% endblock %}
+
+{% block scripts %}
+  {# ?v=N obriga o navegador a baixar o arquivo de novo: aumente o número quando mudar o app.js #}
+  <script defer src="{% static 'kanban/app.js' %}?v=3"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
+{% endblock %}
+
+{% block body_attrs %}x-data="app" x-effect="document.documentElement.classList.toggle('dark', tema === 'dark')"
+      @keydown.escape.window="cardAbertoId !== null && fecharModal()"
+      class="h-screen overflow-hidden bg-slate-100 text-slate-800 antialiased dark:bg-slate-950 dark:text-slate-200"{% endblock %}
+
+{% block corpo %}
+{{ estado|json_script:"estado-inicial" }}
+
+<div class="flex h-full">
+
+  <!-- ===================== SIDEBAR ===================== -->
+  <aside class="hidden w-64 shrink-0 flex-col border-r border-slate-200 bg-white md:flex dark:border-slate-800 dark:bg-slate-900">
+    <div class="flex items-center gap-2 px-5 py-5">
+      <div class="grid h-8 w-8 place-items-center rounded-lg bg-indigo-600 text-white">
+        <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="4" width="5" height="16" rx="1"/><rect x="10" y="4" width="5" height="10" rx="1"/><rect x="17" y="4" width="4" height="13" rx="1"/></svg>
+      </div>
+      <span class="text-lg font-bold tracking-tight">Kanban PMS</span>
+    </div>
+
+    <div class="mx-4 mb-4 rounded-xl bg-indigo-50 px-4 py-3 dark:bg-indigo-500/10">
+      <p class="text-[11px] font-semibold uppercase tracking-wider text-indigo-500">Quadro atual</p>
+      <p class="truncate font-semibold text-indigo-900 dark:text-indigo-200" x-text="$store.kanban.quadro?.nome ?? '—'"></p>
+    </div>
+
+    <!-- Filtro de andar: a lista de quadros abaixo mostra só os do andar escolhido -->
+    <div class="mx-4 mb-4">
+      <label for="filtro-andar" class="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-400">Andar</label>
+      <select id="filtro-andar" @change="$store.kanban.filtrarAndar($event.target.value)"
+              class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 dark:border-slate-700 dark:bg-slate-800">
+        <option value="" :selected="$store.kanban.filtroAndar === ''">Todos os andares</option>
+        <template x-for="a in $store.kanban.opcoesAndar" :key="a.id">
+          <option :value="a.id" :selected="String(a.id) === $store.kanban.filtroAndar" x-text="a.nome"></option>
+        </template>
+      </select>
+    </div>
+
+    <nav class="rolagem flex-1 overflow-y-auto px-3">
+      <p class="px-2 pb-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+        Quadros <span class="normal-case tracking-normal" x-text="`(${$store.kanban.quadrosDoAndar.length})`"></span>
+      </p>
+      <ul class="space-y-0.5">
+        <template x-for="q in $store.kanban.quadrosDoAndar" :key="q.id">
+          <li>
+            <button @click="$store.kanban.selecionarQuadro(q.id)"
+                    class="flex w-full items-center justify-between rounded-lg px-3 py-2 text-sm transition"
+                    :class="q.id === $store.kanban.quadroAtualId
+                      ? 'bg-slate-900 text-white dark:bg-slate-700'
+                      : 'text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800'">
+              <span class="min-w-0 text-left">
+                <span class="block truncate" x-text="q.nome"></span>
+                <span class="block text-[11px]" x-text="q.andar"
+                      :class="q.id === $store.kanban.quadroAtualId ? 'text-white' : 'opacity-60'"></span>
+              </span>
+              <span class="ml-2 rounded-full bg-slate-500/15 px-2 text-xs" x-text="q.cards.length"></span>
+            </button>
+          </li>
+        </template>
+      </ul>
+      <p x-show="!$store.kanban.quadrosDoAndar.length" class="px-2 text-sm text-slate-500"
+         x-text="$store.kanban.filtroAndar ? 'Nenhum projeto neste andar.' : 'Nenhum projeto ainda.'"></p>
+
+      <div class="mt-2 px-1" x-show="$store.kanban.andares.length">
+        <button x-show="!criandoQuadro" @click="criandoQuadro = true; $nextTick(() => $refs.nomeQuadro.focus())"
+                class="flex w-full items-center gap-2 rounded-lg border border-dashed border-slate-300 px-3 py-2 text-sm text-slate-500 transition hover:border-indigo-400 hover:text-indigo-500 dark:border-slate-700">
+          <span class="text-lg leading-none">+</span> Novo quadro
+        </button>
+        <form x-show="criandoQuadro" x-cloak @submit.prevent="confirmarNovoQuadro" class="space-y-2">
+          <input x-ref="nomeQuadro" x-model="novoQuadroNome" @keydown.escape.stop="criandoQuadro = false"
+                 placeholder="Nome do quadro"
+                 class="w-full rounded-lg border border-slate-300 bg-transparent px-3 py-2 text-sm outline-none focus:border-indigo-500 dark:border-slate-700">
+          <select x-show="$store.kanban.andares.length > 1" x-model.number="novoQuadroAndar"
+                  class="w-full rounded-lg border border-slate-300 bg-transparent px-3 py-2 text-sm outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-900">
+            <template x-for="a in $store.kanban.andares" :key="a.id"><option :value="a.id" x-text="a.nome"></option></template>
+          </select>
+          <div class="flex gap-2">
+            <button class="flex-1 rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500">Criar</button>
+            <button type="button" @click="criandoQuadro = false" class="rounded-lg px-3 py-1.5 text-sm text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800">Cancelar</button>
+          </div>
+        </form>
+      </div>
+
+      <template x-if="$store.kanban.quadro">
+        <div class="mt-6 flex items-center justify-between px-2 pb-2">
+          <p class="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Membros do projeto</p>
+          <a :href="`/projetos/${$store.kanban.quadro.id}/`" class="text-xs text-indigo-500 hover:underline"
+             x-text="$store.kanban.quadro.pode_administrar ? 'Gerenciar' : 'Ver'"></a>
+        </div>
+      </template>
+      <p x-show="$store.kanban.quadro && !$store.kanban.membros.length" class="px-2 pb-2 text-xs text-slate-500">Nenhum membro. Adicione em “Gerenciar”.</p>
+      <ul class="space-y-1 pb-2">
+        <template x-for="m in $store.kanban.membros" :key="m.id">
+          <li class="flex items-center gap-3 rounded-lg px-2 py-1.5">
+            <span class="grid h-8 w-8 place-items-center rounded-full text-xs font-semibold text-white" :style="`background:${m.cor}`" x-text="m.iniciais"></span>
+            <span class="flex-1 text-sm" x-text="m.nome"></span>
+            <span class="text-xs text-slate-400" x-text="cardsDoMembro(m.id) + ' tarefa' + (cardsDoMembro(m.id) === 1 ? '' : 's')"></span>
+          </li>
+        </template>
+      </ul>
+      <div x-show="$store.kanban.quadro?.e_membro" class="px-1 pb-4">
+        <button @click="sairDoQuadro"
+                class="w-full rounded-lg px-3 py-1.5 text-left text-xs text-slate-500 transition hover:bg-red-500/10 hover:text-red-500">
+          Sair deste projeto
+        </button>
+      </div>
+    </nav>
+  </aside>
+
+  <!-- ===================== ÁREA PRINCIPAL ===================== -->
+  <main class="flex min-w-0 flex-1 flex-col">
+
+    <!-- NAVEGAÇÃO (mesmos links das telas de gestão) + tema + menu do usuário -->
+    <div class="relative z-30 flex items-center gap-2 border-b border-slate-200 bg-white px-6 py-2 dark:border-slate-800 dark:bg-slate-900">
+      <div class="rolagem min-w-0 overflow-x-auto">{% include "_links_nav.html" %}</div>
+      <div class="ml-auto flex shrink-0 items-center gap-2">
+        <button @click="alternarTema" :title="tema === 'dark' ? 'Mudar para modo claro' : 'Mudar para modo escuro'"
+                class="grid h-9 w-9 place-items-center rounded-lg border border-slate-200 transition hover:bg-slate-100 dark:border-slate-700 dark:hover:bg-slate-800">
+          <svg x-show="tema === 'dark'" class="h-5 w-5 text-amber-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+          <svg x-show="tema !== 'dark'" x-cloak class="h-5 w-5 text-slate-600" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg>
+        </button>
+        {% include "_menu_usuario.html" %}
+      </div>
+    </div>
+
+    <!-- HEADER DO QUADRO -->
+    <header class="relative z-20 flex flex-wrap items-center gap-3 border-b border-slate-200 bg-white/70 px-6 py-3 backdrop-blur dark:border-slate-800 dark:bg-slate-900/60">
+      <div class="mr-auto flex min-w-0 items-center gap-3">
+        <div class="min-w-0">
+          <h1 class="truncate text-xl font-bold tracking-tight" x-text="$store.kanban.quadro?.nome ?? 'Quadros'"></h1>
+          <p class="text-xs text-slate-500 dark:text-slate-400" x-show="$store.kanban.quadro" x-text="$store.kanban.quadro?.andar"></p>
+        </div>
+
+        <!-- Adicionar servidor ao quadro ativo (só quem administra o quadro) -->
+        <div class="relative" x-show="$store.kanban.quadro?.pode_administrar" x-cloak
+             @click.outside="adicionandoMembro = false" @keydown.escape.stop="adicionandoMembro = false">
+          <button @click="alternarAdicionarMembro" title="Adicionar servidor a este quadro"
+                  class="flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-600 transition hover:border-indigo-400 hover:text-indigo-500 dark:border-slate-700 dark:text-slate-300">
+            <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="9" cy="8" r="4"/><path d="M2 21a7 7 0 0 1 14 0M19 8v6M16 11h6"/></svg>
+            <span class="hidden lg:inline">Adicionar servidor</span>
+          </button>
+
+          <div x-show="adicionandoMembro" x-cloak x-transition.opacity.duration.150ms
+               class="absolute left-0 z-40 mt-2 w-80 rounded-xl border border-slate-200 bg-white p-4 shadow-xl dark:border-slate-700 dark:bg-slate-800">
+            <p class="text-sm font-semibold">Adicionar a “<span x-text="$store.kanban.quadro?.nome"></span>”</p>
+            <p class="mb-3 text-xs text-slate-500 dark:text-slate-400">Pode ser servidor de qualquer andar.</p>
+            <input x-ref="buscaCandidato" x-model="buscaCandidato" type="search" placeholder="Buscar pelo nome…"
+                   class="mb-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-900">
+            <p x-show="carregandoCandidatos" class="py-2 text-sm text-slate-400">Carregando…</p>
+            <p x-show="!carregandoCandidatos && !candidatosFiltrados.length" class="py-2 text-sm text-slate-400"
+               x-text="candidatos.length ? 'Ninguém encontrado com esse nome.' : 'Todos os servidores já participam.'"></p>
+            <ul class="rolagem max-h-64 space-y-0.5 overflow-y-auto">
+              <template x-for="u in candidatosFiltrados" :key="u.id">
+                <li>
+                  <button @click="adicionarMembro(u)"
+                          class="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm transition hover:bg-slate-100 dark:hover:bg-slate-700">
+                    <span class="grid h-7 w-7 shrink-0 place-items-center rounded-full text-[10px] font-semibold text-white" :style="`background:${u.cor}`" x-text="u.iniciais"></span>
+                    <span class="flex-1 truncate" x-text="u.nome"></span>
+                    <span class="shrink-0 text-xs text-slate-400" x-text="u.andar ? `${u.andar}º andar` : ''"></span>
+                    <span class="shrink-0 text-lg leading-none text-indigo-500">+</span>
+                  </button>
+                </li>
+              </template>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <label class="relative">
+        <svg class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input x-model="busca" type="search" placeholder="Buscar cards…"
+               class="w-56 rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 dark:border-slate-700 dark:bg-slate-800">
+      </label>
+
+      <select x-model="filtroPrioridade"
+              class="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-800">
+        <option value="">Todas as prioridades</option>
+        <template x-for="p in prioridades" :key="p.valor"><option :value="p.valor" x-text="p.rotulo"></option></template>
+      </select>
+
+      <select x-model="filtroMembro"
+              class="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-800">
+        <option value="">Todos os responsáveis</option>
+        <template x-for="m in $store.kanban.membros" :key="m.id"><option :value="m.id" x-text="m.nome"></option></template>
+      </select>
+
+      <button x-show="filtrando" x-cloak @click="limparFiltros"
+              class="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white/50 px-3 py-1.5 text-sm font-medium text-slate-600 transition hover:border-indigo-400 hover:text-indigo-500 dark:border-slate-700 dark:bg-transparent dark:text-slate-300 dark:hover:border-indigo-500 dark:hover:text-indigo-400">Limpar</button>
+    </header>
+
+    <!-- SEM PROJETOS -->
+    <section x-show="!$store.kanban.quadro" x-cloak class="grid flex-1 place-items-center p-6">
+      <div class="max-w-md text-center">
+        <div class="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-2xl bg-indigo-500/15 text-indigo-500">
+          <svg class="h-7 w-7" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="4" width="5" height="16" rx="1"/><rect x="10" y="4" width="5" height="10" rx="1"/><rect x="17" y="4" width="4" height="13" rx="1"/></svg>
+        </div>
+        <h2 class="text-lg font-semibold">Nenhum projeto por aqui</h2>
+        <p class="mt-1 text-sm text-slate-500 dark:text-slate-400"
+           x-text="$store.kanban.andares.length
+             ? 'Crie o primeiro projeto pela barra lateral ou pela página de Projetos.'
+             : 'Você ainda não participa de nenhum projeto. Peça ao administrador do seu andar para te adicionar.'"></p>
+      </div>
+    </section>
+
+    <!-- QUADRO -->
+    <section x-show="$store.kanban.quadro" class="rolagem flex flex-1 gap-5 overflow-x-auto p-6">
+      <template x-for="col in $store.kanban.quadro?.colunas ?? []" :key="col.id">
+        <div class="flex w-80 shrink-0 flex-col rounded-2xl bg-slate-200/60 dark:bg-slate-900/70">
+
+          <!-- Cabeçalho da coluna -->
+          <div class="flex items-center gap-2 px-4 pb-2 pt-4">
+            <span class="h-2.5 w-2.5 rounded-full"
+                  :class="{ 0: 'bg-slate-400', 1: 'bg-blue-500', 2: 'bg-amber-500', 3: 'bg-emerald-500' }[col.ordem] || 'bg-slate-400'"></span>
+            <h2 class="text-sm font-semibold" x-text="col.titulo"></h2>
+            <span class="rounded-full bg-slate-300/70 px-2 py-0.5 text-xs font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-400"
+                  x-text="filtrando ? `${contarVisiveis(col.id)}/${$store.kanban.cardsDaColuna(col.id).length}` : $store.kanban.cardsDaColuna(col.id).length"></span>
+            <button @click="abrirNovoCard(col.id)" title="Adicionar card"
+                    class="ml-auto grid h-7 w-7 place-items-center rounded-md text-lg text-slate-500 transition hover:bg-slate-300/70 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-white">+</button>
+          </div>
+
+          <!-- Formulário de novo card -->
+          <div x-show="novoCardColuna === col.id" x-cloak x-transition.opacity.duration.150ms class="px-3 pb-2">
+            <textarea :id="'novo-card-' + col.id" x-model="novoCardTitulo" rows="2" placeholder="Título do card… (Enter para salvar)"
+                      @keydown.enter.prevent="confirmarNovoCard" @keydown.escape.stop="cancelarNovoCard"
+                      class="w-full resize-none rounded-xl border border-indigo-400 bg-white p-3 text-sm outline-none ring-2 ring-indigo-500/20 dark:bg-slate-800"></textarea>
+            <div class="mt-1 flex gap-2">
+              <button @click="confirmarNovoCard" class="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500">Adicionar</button>
+              <button @click="cancelarNovoCard" class="rounded-lg px-3 py-1.5 text-xs text-slate-500 hover:bg-slate-300/60 dark:hover:bg-slate-800">Cancelar</button>
+            </div>
+          </div>
+
+          <!-- Lista de cards (área do SortableJS: só cards aqui dentro) -->
+          <div class="rolagem flex min-h-[120px] flex-1 flex-col gap-3 overflow-y-auto px-3 pb-4 pt-1"
+               :data-coluna-id="col.id" x-init="iniciarSortable($el)">
+            <template x-for="card in $store.kanban.cardsDaColuna(col.id)" :key="card.id">
+              <article class="kanban-card group cursor-grab rounded-xl border border-slate-200 bg-white p-3.5 shadow-sm hover:-translate-y-0.5 hover:border-indigo-300 hover:shadow-md active:cursor-grabbing dark:border-slate-800 dark:bg-slate-800/80 dark:hover:border-indigo-500/50"
+                       :data-card-id="card.id" x-show="cardVisivel(card)" @click="abrirCard(card)">
+                <div class="mb-2 flex items-center justify-between">
+                  <span class="inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-[11px] font-semibold ring-1 ring-inset"
+                        :class="prioridade(card.prioridade).classe">
+                    <span class="h-1.5 w-1.5 rounded-full" :class="prioridade(card.prioridade).ponto"></span>
+                    <span x-text="prioridade(card.prioridade).rotulo"></span>
+                  </span>
+                  <span x-show="card._tmp" class="text-[10px] text-slate-400">salvando…</span>
+                </div>
+
+                <h3 class="text-sm font-semibold leading-snug" x-text="card.titulo"></h3>
+                <p x-show="card.descricao" class="mt-1 line-clamp-2 text-xs text-slate-500 dark:text-slate-400" x-text="card.descricao"></p>
+
+                <div x-show="card.checklist.length" class="mt-3">
+                  <div class="h-1 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
+                    <div class="h-full rounded-full bg-indigo-500 transition-all duration-300" :style="`width:${progresso(card)}%`"></div>
+                  </div>
+                </div>
+
+                <div class="mt-3 flex items-center gap-2">
+                  <span x-show="card.vencimento" class="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium"
+                        :class="classeVencimento(card)">
+                    <svg class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 11h18"/></svg>
+                    <span x-text="formatarData(card.vencimento)"></span>
+                  </span>
+                  <span x-show="card.checklist.length" class="inline-flex items-center gap-1 text-[11px] text-slate-500 dark:text-slate-400">
+                    <svg class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></svg>
+                    <span x-text="`${feitos(card)}/${card.checklist.length}`"></span>
+                  </span>
+                  <template x-if="$store.kanban.membro(card?.responsavel_id)">
+                    <span class="ml-auto grid h-6 w-6 place-items-center rounded-full text-[10px] font-semibold text-white ring-2 ring-white dark:ring-slate-800"
+                          :style="`background:${$store.kanban.membro(card?.responsavel_id)?.cor}`"
+                          :title="$store.kanban.membro(card?.responsavel_id)?.nome"
+                          x-text="$store.kanban.membro(card?.responsavel_id)?.iniciais"></span>
+                  </template>
+                </div>
+              </article>
+            </template>
+          </div>
+        </div>
+      </template>
+    </section>
+  </main>
+</div>
+
+<!-- ===================== MODAL DO CARD ===================== -->
+<div x-show="cardAberto" x-cloak class="fixed inset-0 z-40 flex items-start justify-center overflow-y-auto p-4 sm:p-10">
+  <div x-show="cardAberto" x-transition.opacity.duration.200ms @click="fecharModal" class="fixed inset-0 bg-black/70 backdrop-blur-sm"></div>
+
+  <!-- x-data guarda uma referência fixa ao card: ao fechar, os bindings internos não leem null -->
+  <template x-if="cardAberto">
+    <div x-data="{ card: cardAberto }" x-show="card"
+         x-transition:enter="transition ease-out duration-200" x-transition:enter-start="opacity-0 translate-y-4 scale-95" x-transition:enter-end="opacity-100 translate-y-0 scale-100"
+         x-transition:leave="transition ease-in duration-150" x-transition:leave-start="opacity-100 scale-100" x-transition:leave-end="opacity-0 scale-95"
+         class="relative w-full max-w-2xl rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900">
+
+      <div class="flex items-start gap-3 border-b border-slate-200 p-5 dark:border-slate-800">
+        <div class="flex-1">
+          <p class="mb-1 text-xs text-slate-400">em <span class="font-medium" x-text="$store.kanban.coluna(card.coluna_id)?.titulo"></span></p>
+          <input x-model="card.titulo" @change="salvarTitulo" @keydown.enter="$el.blur()"
+                 class="w-full rounded-md bg-transparent px-1 -mx-1 text-xl font-bold outline-none transition hover:bg-slate-100 focus:bg-slate-100 focus:ring-2 focus:ring-indigo-500/30 dark:hover:bg-slate-800 dark:focus:bg-slate-800">
+        </div>
+        <button @click="fecharModal" class="grid h-8 w-8 place-items-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-white" title="Fechar (Esc)">
+          <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg>
+        </button>
+      </div>
+
+      <div class="grid gap-6 p-5 sm:grid-cols-[1fr_200px]">
+        <!-- Coluna esquerda -->
+        <div class="space-y-6">
+          <div>
+            <label class="mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-400">Descrição</label>
+            <textarea x-model="card.descricao" @input.debounce.600ms="$store.kanban.salvar(card, 'descricao')" rows="5"
+                      placeholder="Adicione uma descrição detalhada…"
+                      class="w-full resize-y rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 dark:border-slate-700 dark:bg-slate-800/60"></textarea>
+          </div>
+
+          <div>
+            <div class="mb-2 flex items-center justify-between">
+              <label class="text-xs font-semibold uppercase tracking-wider text-slate-400">Checklist</label>
+              <span class="text-xs font-medium text-slate-500" x-text="`${progresso(card)}%`"></span>
+            </div>
+            <div class="mb-3 h-2 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
+              <div class="h-full rounded-full transition-all duration-500"
+                   :class="progresso(card) === 100 ? 'bg-emerald-500' : 'bg-indigo-500'" :style="`width:${progresso(card)}%`"></div>
+            </div>
+            <ul class="space-y-1">
+              <template x-for="item in card.checklist" :key="item.id ?? item.texto">
+                <li class="group/item flex items-center gap-3 rounded-lg px-2 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-800">
+                  <input type="checkbox" :checked="item.feito" @change="$store.kanban.alternarItem(item)" :disabled="!item.id"
+                         class="h-4 w-4 cursor-pointer rounded accent-indigo-600">
+                  <span class="flex-1 text-sm transition" :class="item.feito && 'text-slate-400 line-through'" x-text="item.texto"></span>
+                  <button @click="$store.kanban.removerItem(card, item)" x-show="item.id"
+                          class="text-slate-400 opacity-0 transition hover:text-red-500 group-hover/item:opacity-100" title="Remover item">
+                    <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg>
+                  </button>
+                </li>
+              </template>
+            </ul>
+            <form @submit.prevent="adicionarItem" class="mt-2 flex gap-2">
+              <input x-model="novoItem" placeholder="Adicionar item…"
+                     class="flex-1 rounded-lg border border-slate-200 bg-transparent px-3 py-1.5 text-sm outline-none focus:border-indigo-500 dark:border-slate-700">
+              <button class="rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-700 dark:bg-slate-700 dark:hover:bg-slate-600">Adicionar</button>
+            </form>
+          </div>
+
+          <div>
+            <label class="mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-400">Histórico</label>
+            <p x-show="carregandoAtividades" class="text-sm text-slate-400">Carregando…</p>
+            <p x-show="!carregandoAtividades && !atividades.length" class="text-sm text-slate-400">Nenhuma atividade registrada.</p>
+            <ol class="rolagem max-h-48 space-y-2 overflow-y-auto pr-1">
+              <template x-for="a in atividades" :key="a.id">
+                <li class="flex gap-2 text-sm">
+                  <span class="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-indigo-500"></span>
+                  <span class="text-slate-600 dark:text-slate-300">
+                    <strong class="font-medium" x-text="a.usuario"></strong> <span x-text="a.descricao"></span>
+                    <span class="block text-xs text-slate-400" x-text="formatarDataHora(a.criado_em)"></span>
+                  </span>
+                </li>
+              </template>
+            </ol>
+          </div>
+        </div>
+
+        <!-- Coluna direita -->
+        <div class="space-y-6">
+          <div>
+            <label class="mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-400">Prioridade</label>
+            <div class="flex flex-col gap-1.5">
+              <template x-for="p in prioridades" :key="p.valor">
+                <button @click="definirPrioridade(p.valor)"
+                        class="flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium ring-1 ring-inset transition"
+                        :class="card.prioridade === p.valor ? p.classe : 'ring-slate-200 text-slate-500 hover:bg-slate-100 dark:ring-slate-700 dark:hover:bg-slate-800'">
+                  <span class="h-2 w-2 rounded-full" :class="p.ponto"></span>
+                  <span x-text="p.rotulo"></span>
+                </button>
+              </template>
+            </div>
+          </div>
+
+          <div>
+            <label class="mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-400">Vencimento</label>
+            <input type="date" x-model="card.vencimento" @change="card.vencimento = card.vencimento || null; $store.kanban.salvar(card, 'vencimento')"
+                   class="w-full rounded-lg border border-slate-200 bg-transparent px-3 py-1.5 text-sm outline-none focus:border-indigo-500 dark:border-slate-700 dark:[color-scheme:dark]">
+            <p x-show="statusVencimento(card) === 'vencido'" class="mt-1 text-xs font-medium text-red-400">Vencido</p>
+          </div>
+
+          <div>
+            <label class="mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-400">Responsável</label>
+            <p x-show="!$store.kanban.membros.length" class="text-xs text-slate-500">O projeto ainda não tem membros.</p>
+            <div class="space-y-1">
+              <template x-for="m in $store.kanban.membros" :key="m.id">
+                <button @click="definirResponsavel(m.id)"
+                        class="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm transition"
+                        :class="card.responsavel_id === m.id ? 'bg-indigo-500/15 text-indigo-600 dark:text-indigo-300' : 'hover:bg-slate-100 dark:hover:bg-slate-800'">
+                  <span class="grid h-6 w-6 place-items-center rounded-full text-[10px] font-semibold text-white" :style="`background:${m.cor}`" x-text="m.iniciais"></span>
+                  <span class="flex-1 text-left" x-text="m.nome"></span>
+                  <svg x-show="card.responsavel_id === m.id" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></svg>
+                </button>
+              </template>
+            </div>
+          </div>
+
+          <button @click="confirmandoExclusao = true"
+                  class="flex w-full items-center justify-center gap-2 rounded-lg border border-red-500/30 px-3 py-2 text-sm font-medium text-red-500 transition hover:bg-red-500 hover:text-white">
+            <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 7h16M10 11v6m4-6v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>
+            Excluir card
+          </button>
+        </div>
+      </div>
+
+      <!-- Pop-in de confirmação de exclusão -->
+      <div x-show="confirmandoExclusao" x-cloak class="absolute inset-0 z-10 grid place-items-center rounded-2xl bg-slate-950/50 backdrop-blur-[2px]"
+           x-transition.opacity.duration.150ms @click.self="confirmandoExclusao = false">
+        <div x-show="confirmandoExclusao"
+             x-transition:enter="transition ease-out duration-200" x-transition:enter-start="opacity-0 scale-90" x-transition:enter-end="opacity-100 scale-100"
+             class="w-80 rounded-2xl border border-slate-200 bg-white p-5 text-center shadow-2xl dark:border-slate-700 dark:bg-slate-800">
+          <div class="mx-auto mb-3 grid h-12 w-12 place-items-center rounded-full bg-red-500/15 text-red-500">
+            <svg class="h-6 w-6" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 9v4m0 4h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>
+          </div>
+          <h3 class="font-semibold">Excluir este card?</h3>
+          <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">"<span x-text="card.titulo"></span>" será removido permanentemente.</p>
+          <div class="mt-5 flex gap-2">
+            <button @click="confirmandoExclusao = false" class="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium hover:bg-slate-100 dark:border-slate-600 dark:hover:bg-slate-700">Cancelar</button>
+            <button @click="excluirCardAberto" class="flex-1 rounded-lg bg-red-600 px-3 py-2 text-sm font-medium text-white hover:bg-red-500">Excluir</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </template>
+</div>
+
+<!-- Avisos de erro -->
+<div class="fixed bottom-4 right-4 z-50 space-y-2">
+  <template x-for="t in $store.kanban.toasts" :key="t.id">
+    <div x-transition class="rounded-lg bg-red-600 px-4 py-3 text-sm text-white shadow-lg" x-text="t.msg"></div>
+  </template>
+</div>
+
+{% endblock %}

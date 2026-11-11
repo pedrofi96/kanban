@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block titulo %}Entrar · Kanban PMS{% endblock %}
+
+{% block corpo %}
+<div class="grid min-h-screen place-items-center px-4 py-10">
+  <div class="w-full max-w-sm">
+    <div class="mb-8 flex justify-center">{% include "_logo.html" %}</div>
+
+    <div class="rounded-2xl border border-slate-200 bg-white p-7 shadow-xl dark:border-slate-800 dark:bg-slate-900">
+      <h1 class="text-xl font-bold tracking-tight">Entrar</h1>
+      <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">Use o usuário e a senha fornecidos pelo administrador do seu andar.</p>
+
+      <form method="post" class="mt-6 space-y-4">
+        {% csrf_token %}
+        <input type="hidden" name="next" value="{{ next }}">
+        {% include "_erros_form.html" %}
+        {% include "_campo.html" with campo=form.username %}
+        {% include "_campo.html" with campo=form.password %}
+        <button class="w-full rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-indigo-500">Entrar</button>
+      </form>
+    </div>
+
+    <p class="mt-6 text-center text-xs text-slate-500">Esqueceu a senha? Peça ao administrador do seu andar para redefini-la.</p>
+    <div class="mt-4 flex justify-center">
+      <button type="button" onclick="alternarTema()" class="rounded-lg px-3 py-1.5 text-xs text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-800">Alternar tema claro/escuro</button>
+    </div>
+  </div>
+</div>
+{% endblock %}

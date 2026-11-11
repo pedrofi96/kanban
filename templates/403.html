@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block titulo %}Sem permissão · Kanban PMS{% endblock %}
+{% block conteudo %}
+<div class="mx-auto max-w-md py-16 text-center">
+  <div class="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-full bg-red-500/15 text-red-500">
+    <svg class="h-7 w-7" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+  </div>
+  <h1 class="text-2xl font-bold tracking-tight">Sem permissão</h1>
+  <p class="mt-2 text-slate-500 dark:text-slate-400">Você não tem acesso a esta página ou ação.</p>
+  <a href="{% url 'index' %}" class="mt-6 inline-block rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500">Voltar aos quadros</a>
+</div>
+{% endblock %}

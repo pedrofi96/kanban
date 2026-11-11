@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% block titulo %}{{ alvo.nome_exibicao }} · Kanban PMS{% endblock %}
+
+{% block conteudo %}
+{% with card="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900" %}
+<a href="{% url 'usuarios_lista' %}" class="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white/50 px-3 py-1.5 text-sm font-medium text-slate-600 transition hover:border-indigo-400 hover:text-indigo-500 dark:border-slate-700 dark:bg-transparent dark:text-slate-300 dark:hover:border-indigo-500 dark:hover:text-indigo-400">← Usuários</a>
+
+<div class="mt-3 mb-6 flex flex-wrap items-center gap-4">
+  <span class="grid h-14 w-14 place-items-center rounded-full text-lg font-semibold text-white" style="background: {{ alvo.cor }}">{{ alvo.iniciais }}</span>
+  <div class="mr-auto">
+    <h1 class="text-2xl font-bold tracking-tight">{{ alvo.nome_exibicao }}{% if e_voce %} <span class="text-base font-normal text-slate-400">(você)</span>{% endif %}</h1>
+    <div class="mt-1 flex flex-wrap items-center gap-2 text-sm text-slate-500 dark:text-slate-400">
+      <span>@{{ alvo.username }}</span> · {% include "_cargo.html" with u=alvo %} · <span>{{ alvo.andar|default:"sem andar" }}</span>
+      {% if not alvo.is_active %}<span class="rounded-md bg-red-500/15 px-2 py-0.5 text-[11px] font-semibold text-red-400">Desativado</span>{% endif %}
+      {% if alvo.deve_trocar_senha %}<span class="rounded-md bg-amber-500/15 px-2 py-0.5 text-[11px] font-semibold text-amber-500">Senha provisória</span>{% endif %}
+    </div>
+  </div>
+  {% if pode_ativacao %}
+  <form method="post" action="{% url 'usuario_ativacao' alvo.pk %}"
+        onsubmit="return confirm('{% if alvo.is_active %}Desativar{% else %}Reativar{% endif %} {{ alvo.nome_exibicao|escapejs }}?')">
+    {% csrf_token %}
+    {% if alvo.is_active %}
+      <button class="rounded-lg border border-red-500/30 px-4 py-2 text-sm font-medium text-red-500 transition hover:bg-red-500 hover:text-white">Desativar</button>
+    {% else %}
+      <button class="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-500">Reativar</button>
+    {% endif %}
+  </form>
+  {% endif %}
+</div>
+
+{% if e_voce %}
+<div class="mb-6 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600 dark:border-slate-800 dark:bg-slate-900/60 dark:text-slate-400">
+  Este é você. Seus dados e sua senha são alterados em <a href="{% url 'perfil' %}" class="font-medium text-indigo-500 hover:underline">Meu perfil</a>;
+  cargo, andar e desativação precisam ser feitos por outro administrador.
+</div>
+{% endif %}
+
+<div class="grid gap-6 lg:grid-cols-[1fr_340px]">
+  <div class="space-y-6">
+    {% if pode_editar and not e_voce %}
+    <form method="post" class="{{ card }} space-y-4">
+      {% csrf_token %}
+      <h2 class="font-semibold">Dados</h2>
+      {% include "_erros_form.html" with form=form_dados %}
+      <div class="grid gap-4 sm:grid-cols-2">
+        {% include "_campo.html" with campo=form_dados.first_name %}
+        {% include "_campo.html" with campo=form_dados.last_name %}
+        {% include "_campo.html" with campo=form_dados.username %}
+        {% include "_campo.html" with campo=form_dados.email %}
+      </div>
+      <div class="flex justify-end">
+        <button class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-indigo-500">Salvar dados</button>
+      </div>
+    </form>
+    {% else %}
+    <div class="{{ card }}">
+      <h2 class="font-semibold">Dados</h2>
+      <dl class="mt-4 grid gap-4 text-sm sm:grid-cols-2">
+        <div><dt class="text-xs font-semibold uppercase tracking-wider text-slate-400">Nome</dt><dd class="mt-1">{{ alvo.nome_exibicao }}</dd></div>
+        <div><dt class="text-xs font-semibold uppercase tracking-wider text-slate-400">E-mail</dt><dd class="mt-1">{{ alvo.email }}</dd></div>
+      </dl>
+    </div>
+    {% endif %}
+
+    <div class="{{ card }}">
+      <h2 class="font-semibold">Projetos</h2>
+      <ul class="mt-3 divide-y divide-slate-100 text-sm dark:divide-slate-800">
+        {% for p in projetos %}
+          <li class="flex items-center justify-between py-2">
+            <a href="{% url 'projeto_detalhe' p.quadro.pk %}" class="font-medium hover:text-indigo-500">{{ p.quadro.nome }}</a>
+            <span class="text-xs text-slate-500">{{ p.quadro.andar }}</span>
+          </li>
+        {% empty %}
+          <li class="py-2 text-slate-500">Não participa de nenhum projeto.</li>
+        {% endfor %}
+      </ul>
+    </div>
+  </div>
+
+  <div class="space-y-6">
+    {% if pode_cargo %}
+    <form method="post" action="{% url 'usuario_cargo' alvo.pk %}" class="{{ card }} space-y-3">
+      {% csrf_token %}
+      <h2 class="font-semibold">Cargo</h2>
+      {{ form_cargo.cargo }}
+      <button class="w-full rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 dark:bg-slate-700 dark:hover:bg-slate-600">Alterar cargo</button>
+    </form>
+    {% endif %}
+
+    {% if pode_transferir %}
+    <form method="post" action="{% url 'usuario_transferir' alvo.pk %}" class="{{ card }} space-y-3"
+          onsubmit="return confirm('Transferir {{ alvo.nome_exibicao|escapejs }}? A pessoa sairá de TODOS os projetos{% if alvo.is_admin_andar %} e passará a ser usuário comum{% endif %}.')">
+      {% csrf_token %}
+      <h2 class="font-semibold">Transferir de andar</h2>
+      <p class="text-xs text-slate-500 dark:text-slate-400">A pessoa sai de todos os projetos e só verá os que for adicionada depois.</p>
+      {{ form_transferir.andar }}
+      <button class="w-full rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 dark:bg-slate-700 dark:hover:bg-slate-600">Transferir</button>
+    </form>
+    {% elif so_por_convite and not e_voce %}
+    <div class="{{ card }} text-sm">
+      <h2 class="font-semibold">Transferir de andar</h2>
+      <p class="mt-2 text-slate-500 dark:text-slate-400">Administradores do andar só mudam de andar por <strong>convite</strong> de um admin do andar de destino.</p>
+    </div>
+    {% endif %}
+
+    {% if pode_senha %}
+    <form method="post" action="{% url 'usuario_senha' alvo.pk %}" class="{{ card }} space-y-3">
+      {% csrf_token %}
+      <h2 class="font-semibold">Redefinir senha</h2>
+      {% include "_campo.html" with campo=form_senha.senha_provisoria %}
+      <button class="w-full rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 dark:bg-slate-700 dark:hover:bg-slate-600">Definir senha provisória</button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+{% endwith %}
+{% endblock %}

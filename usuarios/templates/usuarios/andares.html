@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block titulo %}Andares · Kanban PMS{% endblock %}
+
+{% block conteudo %}
+<h1 class="text-2xl font-bold tracking-tight">Andares</h1>
+<p class="mb-6 text-sm text-slate-500 dark:text-slate-400">Pessoas ativas, projetos e administradores de cada andar.</p>
+
+<div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+  {% for l in linhas %}
+  <div class="rounded-2xl border bg-white p-5 shadow-sm dark:bg-slate-900 {% if not l.admins and l.andar.total %}border-amber-500/50{% else %}border-slate-200 dark:border-slate-800{% endif %}">
+    <div class="flex items-center justify-between">
+      <h2 class="text-lg font-bold">{{ l.andar }}</h2>
+      {% if user.andar_id == l.andar.id %}<span class="rounded-md bg-indigo-500/15 px-2 py-0.5 text-[11px] font-semibold text-indigo-400">seu andar</span>{% endif %}
+    </div>
+
+    <div class="mt-3 flex gap-6 text-sm">
+      <div><p class="text-2xl font-bold">{{ l.andar.total }}</p><p class="text-xs text-slate-500">pessoa{{ l.andar.total|pluralize }}</p></div>
+      <div><p class="text-2xl font-bold">{{ l.andar.projetos }}</p><p class="text-xs text-slate-500">projeto{{ l.andar.projetos|pluralize }}</p></div>
+    </div>
+
+    <div class="mt-4">
+      <p class="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Administradores</p>
+      {% if l.admins %}
+        <ul class="mt-2 space-y-1.5">
+          {% for a in l.admins %}
+          <li class="flex items-center gap-2 text-sm">
+            <span class="grid h-6 w-6 place-items-center rounded-full text-[10px] font-semibold text-white" style="background: {{ a.cor }}">{{ a.iniciais }}</span>
+            {{ a.nome_exibicao }}
+          </li>
+          {% endfor %}
+        </ul>
+      {% elif l.andar.total %}
+        <p class="mt-2 flex items-center gap-2 rounded-lg bg-amber-500/10 px-3 py-2 text-sm text-amber-600 dark:text-amber-400">
+          <svg class="h-4 w-4 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 9v4m0 4h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>
+          Andar sem administrador
+        </p>
+      {% else %}
+        <p class="mt-2 text-sm text-slate-500">Nenhum funcionário neste andar.</p>
+      {% endif %}
+    </div>
+
+    {% if user.is_superuser or user.is_admin_geral or user.andar_id == l.andar.id %}
+      <a href="{% url 'usuarios_lista' %}?andar={{ l.andar.id }}" class="mt-4 inline-block text-sm text-indigo-500 hover:underline">Ver pessoas →</a>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% endblock %}

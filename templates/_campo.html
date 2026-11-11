@@ -1,0 +1,9 @@
+{# Uso: {% include "_campo.html" with campo=form.email %} #}
+<div>
+  <label for="{{ campo.id_for_label }}" class="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-400">
+    {{ campo.label }}{% if campo.field.required %} <span class="text-red-400">*</span>{% endif %}
+  </label>
+  {{ campo }}
+  {% if campo.help_text %}<p class="mt-1 text-xs text-slate-500 dark:text-slate-400">{{ campo.help_text|safe }}</p>{% endif %}
+  {% for erro in campo.errors %}<p class="mt-1 text-xs font-medium text-red-400">{{ erro }}</p>{% endfor %}
+</div>

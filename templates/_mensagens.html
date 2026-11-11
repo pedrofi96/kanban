@@ -1,0 +1,12 @@
+{# Mensagens do Django (messages.success / messages.error) como avisos no canto. #}
+{% if messages %}
+<div class="fixed bottom-4 right-4 z-50 w-80 space-y-2">
+  {% for m in messages %}
+    <div x-data="{ v: true }" x-show="v" x-init="setTimeout(() => v = false, 5000)" x-transition.opacity
+         class="flex items-start gap-3 rounded-lg px-4 py-3 text-sm text-white shadow-lg {% if m.level_tag == 'error' %}bg-red-600{% elif m.level_tag == 'warning' %}bg-amber-600{% else %}bg-emerald-600{% endif %}">
+      <span class="flex-1">{{ m }}</span>
+      <button type="button" @click="v = false" class="opacity-70 hover:opacity-100">✕</button>
+    </div>
+  {% endfor %}
+</div>
+{% endif %}
