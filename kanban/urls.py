@@ -22,6 +22,8 @@ urlpatterns = [
     path("api/quadros/", views.criar_quadro),
     path("api/quadros/<int:quadro_id>/sair/", views.sair_do_quadro),
     path("api/quadros/<int:quadro_id>/membros/", views.membros_do_quadro),
+    path("api/quadros/<int:quadro_id>/colunas/", views.criar_coluna),
+    path("api/colunas/<int:coluna_id>/", views.coluna_detalhe),
     path("api/cards/", views.criar_card),
     path("api/cards/<int:card_id>/", views.card_detalhe),
     path("api/cards/<int:card_id>/mover/", views.mover_card),

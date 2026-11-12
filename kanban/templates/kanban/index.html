@@ -16,7 +16,7 @@
 
 {% block scripts %}
   {# ?v=N obriga o navegador a baixar o arquivo de novo: aumente o número quando mudar o app.js #}
-  <script defer src="{% static 'kanban/app.js' %}?v=3"></script>
+  <script defer src="{% static 'kanban/app.js' %}?v=5"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
 {% endblock %}
 
@@ -227,14 +227,44 @@
         <div class="flex w-80 shrink-0 flex-col rounded-2xl bg-slate-200/60 dark:bg-slate-900/70">
 
           <!-- Cabeçalho da coluna -->
-          <div class="flex items-center gap-2 px-4 pb-2 pt-4">
-            <span class="h-2.5 w-2.5 rounded-full"
-                  :class="{ 0: 'bg-slate-400', 1: 'bg-blue-500', 2: 'bg-amber-500', 3: 'bg-emerald-500' }[col.ordem] || 'bg-slate-400'"></span>
-            <h2 class="text-sm font-semibold" x-text="col.titulo"></h2>
-            <span class="rounded-full bg-slate-300/70 px-2 py-0.5 text-xs font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-400"
+          <div class="group/col flex items-center gap-2 px-4 pb-2 pt-4">
+            <span class="h-2.5 w-2.5 shrink-0 rounded-full" :class="corDaColuna(col)"></span>
+
+            <h2 x-show="colunaEditandoId !== col.id" class="truncate text-sm font-semibold" x-text="col.titulo"></h2>
+            <!-- Renomear (só admin do projeto; nunca a "Concluído") -->
+            <input x-show="colunaEditandoId === col.id" x-cloak :id="'titulo-coluna-' + col.id" x-model="colunaEditandoTitulo" maxlength="60"
+                   @keydown.enter.prevent="confirmarEdicaoColuna(col)" @keydown.escape.stop="colunaEditandoId = null" @blur="confirmarEdicaoColuna(col)"
+                   class="min-w-0 flex-1 rounded-md border border-indigo-400 bg-white px-2 py-0.5 text-sm font-semibold outline-none ring-2 ring-indigo-500/20 dark:bg-slate-800">
+
+            <span x-show="colunaEditandoId !== col.id" class="rounded-full bg-slate-300/70 px-2 py-0.5 text-xs font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-400"
                   x-text="filtrando ? `${contarVisiveis(col.id)}/${$store.kanban.cardsDaColuna(col.id).length}` : $store.kanban.cardsDaColuna(col.id).length"></span>
-            <button @click="abrirNovoCard(col.id)" title="Adicionar card"
-                    class="ml-auto grid h-7 w-7 place-items-center rounded-md text-lg text-slate-500 transition hover:bg-slate-300/70 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-white">+</button>
+
+            <div class="ml-auto flex shrink-0 items-center gap-0.5">
+              <template x-if="$store.kanban.quadro?.pode_gerenciar_colunas && !col.concluida">
+                <div class="flex items-center gap-0.5 opacity-0 transition focus-within:opacity-100 group-hover/col:opacity-100">
+                  <button @click="editarColuna(col)" title="Renomear coluna"
+                          class="grid h-7 w-7 place-items-center rounded-md text-slate-500 transition hover:bg-slate-300/70 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-white">
+                    <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16v4ZM13.5 6.5l4 4"/></svg>
+                  </button>
+                  <button @click="excluirColuna(col)"
+                          :title="$store.kanban.motivoNaoExcluirColuna(col) || 'Excluir coluna'"
+                          :aria-disabled="Boolean($store.kanban.motivoNaoExcluirColuna(col))"
+                          class="grid h-7 w-7 place-items-center rounded-md transition"
+                          :class="$store.kanban.motivoNaoExcluirColuna(col)
+                            ? 'cursor-not-allowed text-slate-400/50'
+                            : 'text-slate-500 hover:bg-red-500/15 hover:text-red-500'">
+                    <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 7h16M10 11v6m4-6v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>
+                  </button>
+                </div>
+              </template>
+              <!-- Cadeado: avisa o admin que esta coluna é fixa -->
+              <span x-show="$store.kanban.quadro?.pode_gerenciar_colunas && col.concluida" x-cloak
+                    title="Coluna fixa: não pode ser renomeada nem excluída" class="grid h-7 w-7 place-items-center text-slate-400">
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
+              </span>
+              <button @click="abrirNovoCard(col.id)" title="Adicionar card"
+                      class="grid h-7 w-7 place-items-center rounded-md text-lg text-slate-500 transition hover:bg-slate-300/70 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-white">+</button>
+            </div>
           </div>
 
           <!-- Formulário de novo card -->
@@ -242,7 +272,13 @@
             <textarea :id="'novo-card-' + col.id" x-model="novoCardTitulo" rows="2" placeholder="Título do card… (Enter para salvar)"
                       @keydown.enter.prevent="confirmarNovoCard" @keydown.escape.stop="cancelarNovoCard"
                       class="w-full resize-none rounded-xl border border-indigo-400 bg-white p-3 text-sm outline-none ring-2 ring-indigo-500/20 dark:bg-slate-800"></textarea>
-            <div class="mt-1 flex gap-2">
+            <!-- Data de vencimento: na criação qualquer membro define; depois só o admin altera -->
+            <label class="mt-1 flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+              Vencimento (opcional)
+              <input type="date" x-model="novoCardVencimento" @keydown.enter.prevent="confirmarNovoCard" @keydown.escape.stop="cancelarNovoCard"
+                     class="min-w-0 flex-1 rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:[color-scheme:dark]">
+            </label>
+            <div class="mt-2 flex gap-2">
               <button @click="confirmarNovoCard" class="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500">Adicionar</button>
               <button @click="cancelarNovoCard" class="rounded-lg px-3 py-1.5 text-xs text-slate-500 hover:bg-slate-300/60 dark:hover:bg-slate-800">Cancelar</button>
             </div>
@@ -294,6 +330,25 @@
           </div>
         </div>
       </template>
+
+      <!-- Nova coluna (só admin do projeto). Ela entra antes da "Concluído". -->
+      <div x-show="$store.kanban.quadro?.pode_gerenciar_colunas" x-cloak class="w-72 shrink-0">
+        <button x-show="!criandoColuna" @click="abrirNovaColuna"
+                class="flex w-full items-center gap-2 rounded-2xl border border-dashed border-slate-300 px-4 py-3 text-sm text-slate-500 transition hover:border-indigo-400 hover:text-indigo-500 dark:border-slate-700">
+          <span class="text-lg leading-none">+</span> Nova coluna
+        </button>
+        <form x-show="criandoColuna" x-cloak @submit.prevent="confirmarNovaColuna"
+              class="space-y-2 rounded-2xl bg-slate-200/60 p-3 dark:bg-slate-900/70">
+          <input x-ref="novaColuna" x-model="novaColunaTitulo" maxlength="60" placeholder="Nome da coluna"
+                 @keydown.escape.stop="criandoColuna = false"
+                 class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-800">
+          <p class="text-xs text-slate-500 dark:text-slate-400">Ela será criada antes de “Concluído”.</p>
+          <div class="flex gap-2">
+            <button class="flex-1 rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500">Criar</button>
+            <button type="button" @click="criandoColuna = false" class="rounded-lg px-3 py-1.5 text-sm text-slate-500 hover:bg-slate-300/60 dark:hover:bg-slate-800">Cancelar</button>
+          </div>
+        </form>
+      </div>
     </section>
   </main>
 </div>
@@ -312,9 +367,21 @@
       <div class="flex items-start gap-3 border-b border-slate-200 p-5 dark:border-slate-800">
         <div class="flex-1">
           <p class="mb-1 text-xs text-slate-400">em <span class="font-medium" x-text="$store.kanban.coluna(card.coluna_id)?.titulo"></span></p>
-          <input x-model="card.titulo" @change="salvarTitulo" @keydown.enter="$el.blur()"
-                 class="w-full rounded-md bg-transparent px-1 -mx-1 text-xl font-bold outline-none transition hover:bg-slate-100 focus:bg-slate-100 focus:ring-2 focus:ring-indigo-500/30 dark:hover:bg-slate-800 dark:focus:bg-slate-800">
+          <input x-model="rascunho.titulo" :readonly="!editando" maxlength="200" @keydown.enter="$el.blur()" aria-label="Título do card"
+                 class="w-full rounded-md px-1 -mx-1 text-xl font-bold outline-none transition"
+                 :class="editando ? 'bg-slate-100 focus:ring-2 focus:ring-indigo-500/30 dark:bg-slate-800' : 'cursor-default bg-transparent'">
         </div>
+        <!-- Editar -> Salvar mudanças -->
+        <button x-show="!editando" @click="iniciarEdicao"
+                class="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-600 transition hover:border-indigo-400 hover:text-indigo-500 dark:border-slate-700 dark:text-slate-300 dark:hover:border-indigo-500 dark:hover:text-indigo-400">
+          <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16v4ZM13.5 6.5l4 4"/></svg>
+          Editar
+        </button>
+        <button x-show="editando" x-cloak @click="salvarEdicao" :disabled="salvando"
+                class="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-indigo-500 disabled:opacity-60">
+          <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></svg>
+          <span x-text="salvando ? 'Salvando…' : 'Salvar mudanças'"></span>
+        </button>
         <button @click="fecharModal" class="grid h-8 w-8 place-items-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-white" title="Fechar (Esc)">
           <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg>
         </button>
@@ -325,34 +392,37 @@
         <div class="space-y-6">
           <div>
             <label class="mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-400">Descrição</label>
-            <textarea x-model="card.descricao" @input.debounce.600ms="$store.kanban.salvar(card, 'descricao')" rows="5"
-                      placeholder="Adicione uma descrição detalhada…"
-                      class="w-full resize-y rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 dark:border-slate-700 dark:bg-slate-800/60"></textarea>
+            <textarea x-model="rascunho.descricao" :readonly="!editando" rows="5"
+                      :placeholder="editando ? 'Adicione uma descrição detalhada…' : 'Sem descrição.'"
+                      class="w-full resize-y rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm outline-none transition dark:border-slate-700 dark:bg-slate-800/60"
+                      :class="editando ? 'focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20' : 'cursor-default'"></textarea>
           </div>
 
           <div>
             <div class="mb-2 flex items-center justify-between">
               <label class="text-xs font-semibold uppercase tracking-wider text-slate-400">Checklist</label>
-              <span class="text-xs font-medium text-slate-500" x-text="`${progresso(card)}%`"></span>
+              <span class="text-xs font-medium text-slate-500" x-text="`${progresso(rascunho)}%`"></span>
             </div>
             <div class="mb-3 h-2 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
               <div class="h-full rounded-full transition-all duration-500"
-                   :class="progresso(card) === 100 ? 'bg-emerald-500' : 'bg-indigo-500'" :style="`width:${progresso(card)}%`"></div>
+                   :class="progresso(rascunho) === 100 ? 'bg-emerald-500' : 'bg-indigo-500'" :style="`width:${progresso(rascunho)}%`"></div>
             </div>
+            <p x-show="!rascunho.checklist.length && !editando" class="text-sm text-slate-400">Nenhum item.</p>
+            <!-- Marcar, adicionar e remover itens só no modo de edição; vai tudo junto no "Salvar mudanças" -->
             <ul class="space-y-1">
-              <template x-for="item in card.checklist" :key="item.id ?? item.texto">
-                <li class="group/item flex items-center gap-3 rounded-lg px-2 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-800">
-                  <input type="checkbox" :checked="item.feito" @change="$store.kanban.alternarItem(item)" :disabled="!item.id"
-                         class="h-4 w-4 cursor-pointer rounded accent-indigo-600">
+              <template x-for="item in rascunho.checklist" :key="item._k">
+                <li class="group/item flex items-center gap-3 rounded-lg px-2 py-1.5" :class="editando && 'hover:bg-slate-100 dark:hover:bg-slate-800'">
+                  <input type="checkbox" x-model="item.feito" :disabled="!editando"
+                         class="h-4 w-4 rounded accent-indigo-600" :class="editando ? 'cursor-pointer' : 'cursor-default'">
                   <span class="flex-1 text-sm transition" :class="item.feito && 'text-slate-400 line-through'" x-text="item.texto"></span>
-                  <button @click="$store.kanban.removerItem(card, item)" x-show="item.id"
-                          class="text-slate-400 opacity-0 transition hover:text-red-500 group-hover/item:opacity-100" title="Remover item">
+                  <button @click="removerItem(item)" x-show="editando"
+                          class="text-slate-400 opacity-0 transition hover:text-red-500 focus:opacity-100 group-hover/item:opacity-100" title="Remover item">
                     <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg>
                   </button>
                 </li>
               </template>
             </ul>
-            <form @submit.prevent="adicionarItem" class="mt-2 flex gap-2">
+            <form x-show="editando" x-cloak @submit.prevent="adicionarItem" class="mt-2 flex gap-2">
               <input x-model="novoItem" placeholder="Adicionar item…"
                      class="flex-1 rounded-lg border border-slate-200 bg-transparent px-3 py-1.5 text-sm outline-none focus:border-indigo-500 dark:border-slate-700">
               <button class="rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-700 dark:bg-slate-700 dark:hover:bg-slate-600">Adicionar</button>
@@ -383,9 +453,11 @@
             <label class="mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-400">Prioridade</label>
             <div class="flex flex-col gap-1.5">
               <template x-for="p in prioridades" :key="p.valor">
-                <button @click="definirPrioridade(p.valor)"
+                <button @click="definirPrioridade(p.valor)" :disabled="!editando"
                         class="flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium ring-1 ring-inset transition"
-                        :class="card.prioridade === p.valor ? p.classe : 'ring-slate-200 text-slate-500 hover:bg-slate-100 dark:ring-slate-700 dark:hover:bg-slate-800'">
+                        :class="[rascunho.prioridade === p.valor ? p.classe : 'ring-slate-200 text-slate-500 dark:ring-slate-700',
+                                 editando ? 'hover:bg-slate-100 dark:hover:bg-slate-800' : 'cursor-default',
+                                 !editando && rascunho.prioridade !== p.valor && 'opacity-50']">
                   <span class="h-2 w-2 rounded-full" :class="p.ponto"></span>
                   <span x-text="p.rotulo"></span>
                 </button>
@@ -395,9 +467,12 @@
 
           <div>
             <label class="mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-400">Vencimento</label>
-            <input type="date" x-model="card.vencimento" @change="card.vencimento = card.vencimento || null; $store.kanban.salvar(card, 'vencimento')"
-                   class="w-full rounded-lg border border-slate-200 bg-transparent px-3 py-1.5 text-sm outline-none focus:border-indigo-500 dark:border-slate-700 dark:[color-scheme:dark]">
+            <!-- Só admin geral / admin do andar do projeto muda a data (o servidor também barra) -->
+            <input type="date" :value="rascunho.vencimento" @change="rascunho.vencimento = $event.target.value || null"
+                   :disabled="!editando || !$store.kanban.quadro?.pode_alterar_vencimento"
+                   class="w-full rounded-lg border border-slate-200 bg-transparent px-3 py-1.5 text-sm outline-none focus:border-indigo-500 disabled:cursor-default dark:border-slate-700 dark:[color-scheme:dark]">
             <p x-show="statusVencimento(card) === 'vencido'" class="mt-1 text-xs font-medium text-red-400">Vencido</p>
+            <p x-show="editando && !$store.kanban.quadro?.pode_alterar_vencimento" x-cloak class="mt-1 text-xs text-slate-500 dark:text-slate-400">Só o administrador do andar altera a data.</p>
           </div>
 
           <div>
@@ -405,18 +480,20 @@
             <p x-show="!$store.kanban.membros.length" class="text-xs text-slate-500">O projeto ainda não tem membros.</p>
             <div class="space-y-1">
               <template x-for="m in $store.kanban.membros" :key="m.id">
-                <button @click="definirResponsavel(m.id)"
+                <button @click="definirResponsavel(m.id)" :disabled="!editando"
                         class="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm transition"
-                        :class="card.responsavel_id === m.id ? 'bg-indigo-500/15 text-indigo-600 dark:text-indigo-300' : 'hover:bg-slate-100 dark:hover:bg-slate-800'">
+                        :class="[rascunho.responsavel_id === m.id ? 'bg-indigo-500/15 text-indigo-600 dark:text-indigo-300' : (editando ? 'hover:bg-slate-100 dark:hover:bg-slate-800' : 'opacity-50'),
+                                 !editando && 'cursor-default']">
                   <span class="grid h-6 w-6 place-items-center rounded-full text-[10px] font-semibold text-white" :style="`background:${m.cor}`" x-text="m.iniciais"></span>
                   <span class="flex-1 text-left" x-text="m.nome"></span>
-                  <svg x-show="card.responsavel_id === m.id" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></svg>
+                  <svg x-show="rascunho.responsavel_id === m.id" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></svg>
                 </button>
               </template>
             </div>
           </div>
 
-          <button @click="confirmandoExclusao = true"
+          <!-- Excluir: só admin geral / admin do andar do projeto -->
+          <button x-show="$store.kanban.quadro?.pode_excluir_card" @click="confirmandoExclusao = true"
                   class="flex w-full items-center justify-center gap-2 rounded-lg border border-red-500/30 px-3 py-2 text-sm font-medium text-red-500 transition hover:bg-red-500 hover:text-white">
             <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 7h16M10 11v6m4-6v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>
             Excluir card
@@ -438,6 +515,22 @@
           <div class="mt-5 flex gap-2">
             <button @click="confirmandoExclusao = false" class="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium hover:bg-slate-100 dark:border-slate-600 dark:hover:bg-slate-700">Cancelar</button>
             <button @click="excluirCardAberto" class="flex-1 rounded-lg bg-red-600 px-3 py-2 text-sm font-medium text-white hover:bg-red-500">Excluir</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Pop-in: fechar com mudanças não salvas -->
+      <div x-show="confirmandoFechar" x-cloak class="absolute inset-0 z-10 grid place-items-center rounded-2xl bg-slate-950/50 backdrop-blur-[2px]"
+           x-transition.opacity.duration.150ms @click.self="confirmandoFechar = false">
+        <div class="w-80 rounded-2xl border border-slate-200 bg-white p-5 text-center shadow-2xl dark:border-slate-700 dark:bg-slate-800">
+          <div class="mx-auto mb-3 grid h-12 w-12 place-items-center rounded-full bg-amber-500/15 text-amber-500">
+            <svg class="h-6 w-6" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 9v4m0 4h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>
+          </div>
+          <h3 class="font-semibold">Fechar sem salvar?</h3>
+          <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">As alterações feitas neste card serão perdidas.</p>
+          <div class="mt-5 flex gap-2">
+            <button @click="confirmandoFechar = false" class="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium hover:bg-slate-100 dark:border-slate-600 dark:hover:bg-slate-700">Continuar editando</button>
+            <button @click="fecharSemSalvar" class="flex-1 rounded-lg bg-red-600 px-3 py-2 text-sm font-medium text-white hover:bg-red-500">Fechar sem salvar</button>
           </div>
         </div>
       </div>

@@ -193,18 +193,52 @@ document.addEventListener("alpine:init", () => {
       } catch (e) { this.avisar(e.message); return false; }
     },
 
+    // ---------- Colunas (só quem tem quadro.pode_gerenciar_colunas) ----------
+    // Sem atualização otimista: espera o servidor e troca a lista de colunas pela que ele devolve.
+    async criarColuna(quadro, titulo) {
+      try {
+        const r = await api("POST", `/api/quadros/${quadro.id}/colunas/`, { titulo });
+        quadro.colunas = r.colunas;
+        return true;
+      } catch (e) { this.avisar(e.message); return false; }
+    },
+
+    async renomearColuna(quadro, coluna, titulo) {
+      try {
+        const r = await api("PATCH", `/api/colunas/${coluna.id}/`, { titulo });
+        quadro.colunas = r.colunas;
+        return true;
+      } catch (e) { this.avisar(e.message); return false; }
+    },
+
+    async excluirColuna(quadro, coluna) {
+      try {
+        const r = await api("DELETE", `/api/colunas/${coluna.id}/`);
+        quadro.colunas = r.colunas;
+      } catch (e) { this.falhou(e); } // recarrega: outra pessoa pode ter posto um card na coluna
+    },
+
+    // Por que a coluna não pode ser excluída ("" = pode). As mesmas regras são checadas no servidor.
+    motivoNaoExcluirColuna(coluna) {
+      if (coluna.concluida) return "A coluna “Concluído” não pode ser excluída.";
+      if (this.cardsDaColuna(coluna.id).length) return "Só é possível excluir uma coluna vazia.";
+      if ((this.quadro?.colunas.length ?? 0) <= 3) return "O projeto precisa ter pelo menos 3 colunas.";
+      return "";
+    },
+
     // ---------- Cards ----------
-    criarCard(colunaId, titulo) {
+    // Na criação qualquer membro pode definir a data; depois, só quem tem pode_alterar_vencimento.
+    criarCard(colunaId, titulo, vencimento = null) {
       const quadro = this.quadro;
       const tmp = "tmp" + ++seqTemp;
       const ordem = this.cardsDaColuna(colunaId).length;
       quadro.cards.push({
         id: tmp, _tmp: tmp, coluna_id: colunaId, titulo, descricao: "",
-        prioridade: "media", responsavel_id: null, vencimento: null, ordem, checklist: [],
+        prioridade: "media", responsavel_id: null, vencimento, ordem, checklist: [],
       });
       const card = quadro.cards[quadro.cards.length - 1]; // versão reativa (proxy)
 
-      const promessa = api("POST", "/api/cards/", { coluna_id: colunaId, titulo })
+      const promessa = api("POST", "/api/cards/", { coluna_id: colunaId, titulo, vencimento })
         .then((real) => {
           card.id = real.id;
           delete card._tmp;
@@ -215,12 +249,15 @@ document.addEventListener("alpine:init", () => {
       return card;
     },
 
-    async salvar(card, ...campos) {
-      const corpo = Object.fromEntries(campos.map((c) => [c, card[c]]));
+    // "Salvar mudanças": manda só o que mudou (campos e/ou checklist) numa chamada.
+    // O card da tela só é atualizado depois que o servidor confirma.
+    async salvarCard(card, corpo) {
       try {
         const id = await this.idReal(card);
-        await api("PATCH", `/api/cards/${id}/`, corpo);
-      } catch (e) { this.falhou(e); }
+        const real = await api("PATCH", `/api/cards/${id}/`, corpo);
+        Object.assign(card, real);
+        return true;
+      } catch (e) { this.avisar(e.message); return false; }
     },
 
     async excluirCard(card) {
@@ -250,29 +287,6 @@ document.addEventListener("alpine:init", () => {
         await api("POST", `/api/cards/${id}/mover/`, { coluna_id: destinoId, ordem: posicao });
       } catch (e) { this.falhou(e); }
     },
-
-    // ---------- Checklist ----------
-    async adicionarItem(card, texto) {
-      card.checklist.push({ id: null, texto, feito: false });
-      const item = card.checklist[card.checklist.length - 1];
-      try {
-        const id = await this.idReal(card);
-        const real = await api("POST", `/api/cards/${id}/checklist/`, { texto });
-        item.id = real.id;
-      } catch (e) { this.falhou(e); }
-    },
-
-    async alternarItem(item) {
-      item.feito = !item.feito;
-      try { await api("PATCH", `/api/checklist/${item.id}/`, { feito: item.feito }); }
-      catch (e) { this.falhou(e); }
-    },
-
-    async removerItem(card, item) {
-      card.checklist.splice(card.checklist.indexOf(item), 1);
-      try { await api("DELETE", `/api/checklist/${item.id}/`); }
-      catch (e) { this.falhou(e); }
-    },
   });
 
   // =====================================================================
@@ -288,12 +302,26 @@ document.addEventListener("alpine:init", () => {
     confirmandoExclusao: false,
     novoItem: "",
 
+    // Modo de edição do card. O modal mostra sempre o RASCUNHO (cópia do card);
+    // o card de verdade só muda quando "Salvar mudanças" dá certo.
+    editando: false,
+    salvando: false,
+    confirmandoFechar: false,
+    rascunho: { titulo: "", descricao: "", prioridade: "media", vencimento: null, responsavel_id: null, checklist: [] },
+    original: "",             // rascunho como estava ao clicar em "Editar" (texto JSON, para comparar)
+
     novoCardColuna: null,
     novoCardTitulo: "",
+    novoCardVencimento: "",
 
     criandoQuadro: false,
     novoQuadroNome: "",
     novoQuadroAndar: null,
+
+    criandoColuna: false,
+    novaColunaTitulo: "",
+    colunaEditandoId: null,   // id da coluna que está sendo renomeada
+    colunaEditandoTitulo: "",
 
     atividades: [],
     carregandoAtividades: false,
@@ -316,7 +344,11 @@ document.addEventListener("alpine:init", () => {
       // Ao trocar o filtro de andar, o "Novo quadro" passa a sugerir esse andar.
       this.$watch("$store.kanban.filtroAndar", () => this.ajustarAndarDoNovoQuadro());
       // Trocou de quadro: fecha a caixa de "Adicionar servidor" (a lista era do outro quadro).
-      this.$watch("$store.kanban.quadroAtualId", () => (this.adicionandoMembro = false));
+      this.$watch("$store.kanban.quadroAtualId", () => {
+        this.adicionandoMembro = false;
+        this.criandoColuna = false;
+        this.colunaEditandoId = null;
+      });
     },
 
     // Andar padrão do "Novo quadro": o filtrado; senão o meu; senão o primeiro permitido.
@@ -448,23 +480,64 @@ document.addEventListener("alpine:init", () => {
       if (ok) this.k.sairDoQuadro(quadro);
     },
 
+    // ---------- Colunas ----------
+    abrirNovaColuna() {
+      this.criandoColuna = true;
+      this.novaColunaTitulo = "";
+      this.$nextTick(() => this.$refs.novaColuna?.focus());
+    },
+
+    async confirmarNovaColuna() {
+      const titulo = this.novaColunaTitulo.trim();
+      if (!titulo) return;
+      if (await this.k.criarColuna(this.k.quadro, titulo)) this.criandoColuna = false;
+    },
+
+    editarColuna(coluna) {
+      this.colunaEditandoId = coluna.id;
+      this.colunaEditandoTitulo = coluna.titulo;
+      this.$nextTick(() => document.getElementById("titulo-coluna-" + coluna.id)?.select());
+    },
+
+    async confirmarEdicaoColuna(coluna) {
+      if (this.colunaEditandoId !== coluna.id) return; // já confirmou (Enter + perda de foco)
+      const titulo = this.colunaEditandoTitulo.trim();
+      this.colunaEditandoId = null;
+      if (!titulo || titulo === coluna.titulo) return;
+      await this.k.renomearColuna(this.k.quadro, coluna, titulo);
+    },
+
+    excluirColuna(coluna) {
+      if (this.k.motivoNaoExcluirColuna(coluna)) return;
+      if (window.confirm(`Excluir a coluna "${coluna.titulo}"?`)) this.k.excluirColuna(this.k.quadro, coluna);
+    },
+
+    // Cor da bolinha: "Concluído" é sempre verde; as outras seguem a posição.
+    corDaColuna(coluna) {
+      if (coluna.concluida) return "bg-emerald-500";
+      return ["bg-slate-400", "bg-blue-500", "bg-amber-500", "bg-violet-500", "bg-pink-500", "bg-cyan-500"][coluna.ordem % 6];
+    },
+
     // ---------- Novo card ----------
     abrirNovoCard(colunaId) {
       this.novoCardColuna = colunaId;
       this.novoCardTitulo = "";
+      this.novoCardVencimento = "";
       this.$nextTick(() => document.getElementById("novo-card-" + colunaId)?.focus());
     },
 
     confirmarNovoCard() {
       const titulo = this.novoCardTitulo.trim();
       if (!titulo) return this.cancelarNovoCard();
-      this.k.criarCard(this.novoCardColuna, titulo);
+      this.k.criarCard(this.novoCardColuna, titulo, this.novoCardVencimento || null);
       this.novoCardTitulo = ""; // mantém aberto para adicionar vários seguidos
+      this.novoCardVencimento = "";
     },
 
     cancelarNovoCard() {
       this.novoCardColuna = null;
       this.novoCardTitulo = "";
+      this.novoCardVencimento = "";
     },
 
     // ---------- Modal ----------
@@ -472,8 +545,67 @@ document.addEventListener("alpine:init", () => {
       if (arrastando) return;
       this.cardAbertoId = card.id;
       this.confirmandoExclusao = false;
+      this.confirmandoFechar = false;
+      this.editando = false;
       this.novoItem = "";
+      this.rascunho = this.copiaDoCard(card);
       this.carregarAtividades(card);
+    },
+
+    // ---------- Modo de edição ----------
+    copiaDoCard(card) {
+      return {
+        titulo: card.titulo,
+        descricao: card.descricao,
+        prioridade: card.prioridade,
+        vencimento: card.vencimento,
+        responsavel_id: card.responsavel_id,
+        // _k: chave só da tela (item novo ainda não tem id)
+        checklist: card.checklist.map((i) => ({ _k: ++seqTemp, id: i.id, texto: i.texto, feito: i.feito })),
+      };
+    },
+
+    iniciarEdicao() {
+      this.rascunho = this.copiaDoCard(this.cardAberto);
+      this.original = JSON.stringify(this.rascunho);
+      this.novoItem = "";
+      this.editando = true;
+    },
+
+    // true se o rascunho está diferente de como estava ao clicar em "Editar".
+    get alterado() {
+      return this.editando && JSON.stringify(this.rascunho) !== this.original;
+    },
+
+    async salvarEdicao() {
+      const card = this.cardAberto;
+      const r = this.rascunho;
+      r.titulo = r.titulo.trim();
+      if (!r.titulo) return this.k.avisar("O título é obrigatório.");
+      if (!this.alterado) { this.editando = false; return; } // nada mudou: nem chama o servidor
+
+      const antes = JSON.parse(this.original);
+      const corpo = {};
+      for (const campo of ["titulo", "descricao", "prioridade", "vencimento", "responsavel_id"]) {
+        if (r[campo] !== antes[campo]) corpo[campo] = r[campo];
+      }
+      if (JSON.stringify(r.checklist) !== JSON.stringify(antes.checklist)) {
+        corpo.checklist = r.checklist.map(({ id, texto, feito }) => ({ id, texto, feito }));
+      }
+
+      this.salvando = true;
+      const ok = await this.k.salvarCard(card, corpo);
+      this.salvando = false;
+      if (!ok) return; // deu erro: continua editando, sem perder o que foi digitado
+      this.editando = false;
+      this.rascunho = this.copiaDoCard(card);
+      this.carregarAtividades(card);
+    },
+
+    fecharSemSalvar() {
+      this.confirmandoFechar = false;
+      this.editando = false;
+      this.cardAbertoId = null;
     },
 
     async carregarAtividades(card) {
@@ -487,37 +619,38 @@ document.addEventListener("alpine:init", () => {
       this.carregandoAtividades = false;
     },
 
+    // X, Esc ou clique fora. Só pergunta se houver mudança não salva.
     fecharModal() {
       if (this.confirmandoExclusao) { this.confirmandoExclusao = false; return; }
-      this.cardAbertoId = null;
+      if (this.confirmandoFechar) { this.confirmandoFechar = false; return; } // volta a editar
+      if (this.alterado) { this.confirmandoFechar = true; return; }
+      this.fecharSemSalvar();
     },
 
+    // As funções abaixo mexem só no rascunho, e só no modo de edição.
     definirPrioridade(valor) {
-      this.cardAberto.prioridade = valor;
-      this.k.salvar(this.cardAberto, "prioridade");
+      if (this.editando) this.rascunho.prioridade = valor;
     },
 
     definirResponsavel(id) {
-      const card = this.cardAberto;
-      card.responsavel_id = card.responsavel_id === id ? null : id;
-      this.k.salvar(card, "responsavel_id").then(() => this.carregarAtividades(card));
-    },
-
-    salvarTitulo() {
-      if (!this.cardAberto.titulo.trim()) this.cardAberto.titulo = "Sem título";
-      this.k.salvar(this.cardAberto, "titulo");
+      if (this.editando) this.rascunho.responsavel_id = this.rascunho.responsavel_id === id ? null : id;
     },
 
     adicionarItem() {
       const texto = this.novoItem.trim();
-      if (!texto) return;
-      this.k.adicionarItem(this.cardAberto, texto);
+      if (!texto || !this.editando) return;
+      this.rascunho.checklist.push({ _k: ++seqTemp, id: null, texto, feito: false });
       this.novoItem = "";
+    },
+
+    removerItem(item) {
+      if (this.editando) this.rascunho.checklist = this.rascunho.checklist.filter((i) => i !== item);
     },
 
     async excluirCardAberto() {
       const card = this.cardAberto;
       this.confirmandoExclusao = false;
+      this.editando = false;
       this.cardAbertoId = null;
       await this.k.excluirCard(card);
     },

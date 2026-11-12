@@ -45,9 +45,18 @@ def _corpo(request):
         return {}
 
 
+def _data(texto):
+    """Converte "2026-11-30" em date. Vazio vira None; formato errado levanta ValueError."""
+    return date.fromisoformat(texto) if texto else None
+
+
 def _quadro_dict(quadro, usuario):
     dados = quadro.to_dict()
     dados["pode_administrar"] = permissoes.pode_administrar_quadro(usuario, quadro)
+    # O front usa estas flags para esconder/travar botões (a regra de verdade é checada nas views).
+    dados["pode_excluir_card"] = permissoes.pode_excluir_card(usuario, quadro)
+    dados["pode_alterar_vencimento"] = permissoes.pode_alterar_vencimento(usuario, quadro)
+    dados["pode_gerenciar_colunas"] = permissoes.pode_gerenciar_colunas(usuario, quadro)
     dados["e_membro"] = any(m["id"] == usuario.pk for m in dados["membros"])
     return dados
 
@@ -132,6 +141,43 @@ def membros_do_quadro(request, quadro_id):
     return JsonResponse(_quadro_dict(quadro, request.user))
 
 
+# ---------- Colunas ----------
+
+def _colunas(quadro):
+    """As três rotas de coluna devolvem a lista inteira: o front só troca a lista do quadro."""
+    return JsonResponse({"colunas": [c.to_dict() for c in quadro.colunas.all()]})
+
+
+@api_login_required
+@require_http_methods(["POST"])
+def criar_coluna(request, quadro_id):
+    quadro = get_object_or_404(Quadro, pk=quadro_id)
+    if not permissoes.pode_gerenciar_colunas(request.user, quadro):
+        return _negado()
+    try:
+        services.criar_coluna(quadro, _corpo(request).get("titulo"))
+    except services.RegraDeColuna as erro:
+        return JsonResponse({"erro": str(erro)}, status=400)
+    return _colunas(quadro)
+
+
+@api_login_required
+@require_http_methods(["PATCH", "DELETE"])
+def coluna_detalhe(request, coluna_id):
+    coluna = get_object_or_404(Coluna.objects.select_related("quadro"), pk=coluna_id)
+    quadro = coluna.quadro
+    if not permissoes.pode_gerenciar_colunas(request.user, quadro):
+        return _negado()
+    try:
+        if request.method == "DELETE":
+            services.excluir_coluna(coluna)
+        else:
+            services.renomear_coluna(coluna, _corpo(request).get("titulo"))
+    except services.RegraDeColuna as erro:
+        return JsonResponse({"erro": str(erro)}, status=400)
+    return _colunas(quadro)
+
+
 # ---------- Cards ----------
 
 @api_login_required
@@ -144,11 +190,17 @@ def criar_card(request):
     titulo = (dados.get("titulo") or "").strip()
     if not titulo:
         return JsonResponse({"erro": "Título é obrigatório."}, status=400)
+    # Na criação, qualquer um que vê o quadro pode definir a data de vencimento.
+    try:
+        vencimento = _data(dados.get("vencimento"))
+    except (TypeError, ValueError):
+        return JsonResponse({"erro": "Data de vencimento inválida."}, status=400)
     proxima = (coluna.cards.aggregate(m=Max("ordem"))["m"] or -1) + 1
     card = Card.objects.create(
         coluna=coluna,
         titulo=titulo[:200],
         prioridade=dados.get("prioridade") or Card.Prioridade.MEDIA,
+        vencimento=vencimento,
         ordem=proxima,
     )
     services.registrar(card, request.user, AtividadeCard.Tipo.CRIADO, f"criou o card em “{coluna.titulo}”")
@@ -167,14 +219,26 @@ def card_detalhe(request, card_id):
         return _negado()
 
     if request.method == "DELETE":
+        if not permissoes.pode_excluir_card(request.user, quadro):
+            return JsonResponse({"erro": "Só o administrador do andar pode excluir cards."}, status=403)
         card.delete()
         return JsonResponse({"ok": True})
 
-    dados = {k: v for k, v in _corpo(request).items() if k in CAMPOS_EDITAVEIS}
+    corpo = _corpo(request)
+    dados = {k: v for k, v in corpo.items() if k in CAMPOS_EDITAVEIS}
     if "prioridade" in dados and dados["prioridade"] not in Card.Prioridade.values:
         return JsonResponse({"erro": "Prioridade inválida."}, status=400)
     if "vencimento" in dados:
-        dados["vencimento"] = date.fromisoformat(dados["vencimento"]) if dados["vencimento"] else None
+        try:
+            dados["vencimento"] = _data(dados["vencimento"])
+        except (TypeError, ValueError):
+            return JsonResponse({"erro": "Data de vencimento inválida."}, status=400)
+        # Só barra se a data MUDOU: assim o front pode reenviar a mesma data sem erro.
+        mudou = dados["vencimento"] != card.vencimento
+        if mudou and not permissoes.pode_alterar_vencimento(request.user, quadro):
+            return JsonResponse(
+                {"erro": "Só o administrador do andar pode alterar a data de vencimento."}, status=403
+            )
     if "titulo" in dados and not dados["titulo"].strip():
         return JsonResponse({"erro": "Título é obrigatório."}, status=400)
 
@@ -184,16 +248,24 @@ def card_detalhe(request, card_id):
         if novo_responsavel is None:
             return JsonResponse({"erro": "O responsável precisa ser membro do projeto."}, status=400)
 
-    if "responsavel_id" in dados and dados["responsavel_id"] != card.responsavel_id:
-        descricao = (
-            f"definiu {novo_responsavel.nome_exibicao} como responsável"
-            if novo_responsavel else "removeu o responsável"
-        )
-        services.registrar(card, request.user, AtividadeCard.Tipo.RESPONSAVEL, descricao)
+    # O "Salvar mudanças" manda campos e checklist juntos: ou grava tudo, ou não grava nada.
+    try:
+        with transaction.atomic():
+            if "checklist" in corpo:
+                services.sincronizar_checklist(card, corpo["checklist"])
 
-    for campo, valor in dados.items():
-        setattr(card, campo, valor)
-    card.save()
+            if "responsavel_id" in dados and dados["responsavel_id"] != card.responsavel_id:
+                descricao = (
+                    f"definiu {novo_responsavel.nome_exibicao} como responsável"
+                    if novo_responsavel else "removeu o responsável"
+                )
+                services.registrar(card, request.user, AtividadeCard.Tipo.RESPONSAVEL, descricao)
+
+            for campo, valor in dados.items():
+                setattr(card, campo, valor)
+            card.save()
+    except ValueError:
+        return JsonResponse({"erro": "Checklist inválido."}, status=400)
     return JsonResponse(card.to_dict())
 
 

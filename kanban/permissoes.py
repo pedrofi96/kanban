@@ -39,8 +39,26 @@ def pode_ver_quadro(usuario, quadro):
 
 
 def pode_mexer_nos_cards(usuario, quadro):
-    """Criar, mover, editar e excluir tarefas: todos que veem o quadro."""
+    """Criar, mover e editar tarefas: todos que veem o quadro.
+    Excluir o card e mudar a data têm regras próprias, logo abaixo."""
     return pode_ver_quadro(usuario, quadro)
+
+
+def pode_excluir_card(usuario, quadro):
+    """Só admin geral ou admin do andar DO PROJETO. Usuário normal não exclui."""
+    return pode_administrar_quadro(usuario, quadro)
+
+
+def pode_alterar_vencimento(usuario, quadro):
+    """Mudar a data de um card que já existe: mesma regra de excluir.
+    Na CRIAÇÃO do card qualquer um que vê o quadro pode definir a data."""
+    return pode_administrar_quadro(usuario, quadro)
+
+
+def pode_gerenciar_colunas(usuario, quadro):
+    """Criar, renomear e excluir colunas. Aqui é só QUEM pode; as regras da coluna
+    em si (mínimo de 3, coluna vazia, "Concluído" intocável) estão em services.py."""
+    return pode_administrar_quadro(usuario, quadro)
 
 
 def pode_criar_quadro(ator, andar):
