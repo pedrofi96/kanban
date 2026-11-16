@@ -9,6 +9,8 @@
     .card-fantasma > * { visibility: hidden; }
     .card-arrastado { transform: rotate(3deg) scale(1.03); box-shadow: 0 20px 40px -10px rgb(0 0 0 / .5); opacity: 1 !important; cursor: grabbing; }
     .kanban-card { transition: transform .15s ease, box-shadow .15s ease, border-color .15s ease; user-select: none; }
+    .coluna-fantasma { opacity: .4; }
+    .coluna-fantasma > * { visibility: hidden; }
     /* Enquanto um card é arrastado, nada na página pode ser selecionado */
     body.arrastando-card, body.arrastando-card * { user-select: none !important; -webkit-user-select: none !important; cursor: grabbing !important; }
   </style>
@@ -16,7 +18,7 @@
 
 {% block scripts %}
   {# ?v=N obriga o navegador a baixar o arquivo de novo: aumente o número quando mudar o app.js #}
-  <script defer src="{% static 'kanban/app.js' %}?v=5"></script>
+  <script defer src="{% static 'kanban/app.js' %}?v=6"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
 {% endblock %}
 
@@ -222,12 +224,20 @@
     </section>
 
     <!-- QUADRO -->
-    <section x-show="$store.kanban.quadro" class="rolagem flex flex-1 gap-5 overflow-x-auto p-6">
+    <section x-show="$store.kanban.quadro" class="rolagem flex flex-1 gap-5 overflow-x-auto p-6"
+             x-init="iniciarSortableColunas($el)">
       <template x-for="col in $store.kanban.quadro?.colunas ?? []" :key="col.id">
-        <div class="flex w-80 shrink-0 flex-col rounded-2xl bg-slate-200/60 dark:bg-slate-900/70">
+        <div class="kanban-coluna flex w-80 shrink-0 flex-col rounded-2xl bg-slate-200/60 dark:bg-slate-900/70"
+             :class="col.concluida && 'coluna-concluida'" :data-coluna-id="col.id">
 
           <!-- Cabeçalho da coluna -->
           <div class="group/col flex items-center gap-2 px-4 pb-2 pt-4">
+            <!-- Alça de arraste (só admin; a "Concluído" não se move) -->
+            <span x-show="$store.kanban.quadro?.pode_gerenciar_colunas && !col.concluida" x-cloak
+                  title="Arrastar coluna"
+                  class="alca-coluna -ml-2 grid h-6 w-4 shrink-0 cursor-grab place-items-center text-slate-400 hover:text-slate-700 active:cursor-grabbing dark:hover:text-white">
+              <svg class="h-4 w-4" fill="currentColor" viewBox="0 0 24 24"><circle cx="9" cy="6" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="18" r="1.5"/></svg>
+            </span>
             <span class="h-2.5 w-2.5 shrink-0 rounded-full" :class="corDaColuna(col)"></span>
 
             <h2 x-show="colunaEditandoId !== col.id" class="truncate text-sm font-semibold" x-text="col.titulo"></h2>

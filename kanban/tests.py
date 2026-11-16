@@ -260,7 +260,51 @@ class RegrasDeColunaTests(TestCase):
         self.assertEqual(self.excluir(self.admin_do_andar, self.coluna("Em Revisão")).status_code, 400)
         self.assertEqual(self.titulos(), ["A Fazer", "Em Revisão", "Concluído"])
 
+    # ---------- mover ----------
 
+    def test_mover_coluna_para_o_inicio(self):
+        services.mover_coluna(self.coluna("Em Revisão"), 0)
+        self.assertEqual(self.titulos(), ["Em Revisão", "A Fazer", "Em Progresso", "Concluído"])
+
+    def test_coluna_nao_passa_da_concluido(self):
+        services.mover_coluna(self.coluna("A Fazer"), 99)
+        self.assertEqual(self.titulos(), ["Em Progresso", "Em Revisão", "A Fazer", "Concluído"])
+
+    def test_concluido_nao_se_move(self):
+        with self.assertRaises(services.RegraDeColuna):
+            services.mover_coluna(self.coluna("Concluído"), 0)
+
+    def test_posicao_invalida_e_recusada(self):
+        with self.assertRaises(services.RegraDeColuna):
+            services.mover_coluna(self.coluna("A Fazer"), "abc")
+
+    def test_cards_vao_junto_com_a_coluna(self):
+        coluna = self.coluna("Em Revisão")
+        card = Card.objects.create(coluna=coluna, titulo="Card")
+        services.mover_coluna(coluna, 0)
+        card.refresh_from_db()
+        self.assertEqual(card.coluna_id, coluna.pk)
+
+    def mover(self, usuario, coluna, ordem):
+        return self.como(usuario).post(
+            f"/api/colunas/{coluna.pk}/mover/", json.dumps({"ordem": ordem}), content_type="application/json"
+        )
+
+    def test_admin_move_coluna_pela_api(self):
+        resposta = self.mover(self.admin_do_andar, self.coluna("Em Revisão"), 0)
+        self.assertEqual(resposta.status_code, 200)
+        self.assertEqual([c["titulo"] for c in resposta.json()["colunas"]],
+                         ["Em Revisão", "A Fazer", "Em Progresso", "Concluído"])
+
+    def test_usuario_normal_nao_move_coluna(self):
+        self.assertEqual(self.mover(self.usuario, self.coluna("Em Revisão"), 0).status_code, 403)
+        self.assertEqual(self.titulos(), ["A Fazer", "Em Progresso", "Em Revisão", "Concluído"])
+
+    def test_admin_de_outro_andar_nao_move_coluna(self):
+        self.assertEqual(self.mover(self.admin_de_fora, self.coluna("Em Revisão"), 0).status_code, 403)
+
+    def test_mover_concluido_pela_api_da_400(self):
+        self.assertEqual(self.mover(self.admin_geral, self.coluna("Concluído"), 0).status_code, 400)
 class SalvarMudancasTests(TestCase):
     """O "Salvar mudanças" do card: campos e checklist numa chamada só."""
 
@@ -318,3 +362,75 @@ class SalvarMudancasTests(TestCase):
     def test_checklist_malformado_e_recusado(self):
         self.assertEqual(self.salvar({"checklist": "abc"}).status_code, 400)
         self.assertEqual(self.checklist(), [("Manter", False), ("Remover", False)])
+
+
+class StatusDoProjetoTests(TestCase):
+    """Projeto concluído = pelo menos 1 card e todos na coluna "Concluído"."""
+
+    @classmethod
+    def setUpTestData(cls):
+        andar2 = Andar.objects.get(numero=2)
+        cls.admin = criar_usuario("admin2", andar2, Cargo.ADMIN_ANDAR)
+        cls.quadro = services.criar_quadro("Projeto de teste", andar2, cls.admin)
+        cls.a_fazer = cls.quadro.colunas.get(titulo="A Fazer")
+        cls.concluido = cls.quadro.colunas.get(concluida=True)
+
+    def setUp(self):
+        self.client.force_login(self.admin)
+
+    def post(self, url, dados):
+        return self.client.post(url, json.dumps(dados), content_type="application/json")
+
+    def criar(self, coluna, titulo="Card"):
+        return self.post("/api/cards/", {"coluna_id": coluna.pk, "titulo": titulo}).json()["id"]
+
+    def mover(self, card_id, coluna):
+        return self.post(f"/api/cards/{card_id}/mover/", {"coluna_id": coluna.pk, "ordem": 0})
+
+    def status(self):
+        self.quadro.refresh_from_db()
+        return self.quadro.concluido
+
+    def test_projeto_sem_cards_nao_e_concluido(self):
+        self.assertFalse(self.status())
+        self.assertIsNone(self.quadro.concluido_em)
+
+    def test_fica_concluido_quando_o_ultimo_card_chega_na_coluna_concluido(self):
+        um, dois = self.criar(self.a_fazer), self.criar(self.a_fazer)
+        self.mover(um, self.concluido)
+        self.assertFalse(self.status())          # ainda falta um
+        self.mover(dois, self.concluido)
+        self.assertTrue(self.status())
+        self.assertIsNotNone(self.quadro.concluido_em)
+
+    def test_deixa_de_ser_concluido_quando_um_card_volta(self):
+        card = self.criar(self.concluido)        # criado direto na "Concluído"
+        self.assertTrue(self.status())
+        self.mover(card, self.a_fazer)
+        self.assertFalse(self.status())
+        self.assertIsNone(self.quadro.concluido_em)
+
+    def test_card_novo_em_outra_coluna_reabre_o_projeto(self):
+        self.criar(self.concluido)
+        self.assertTrue(self.status())
+        self.criar(self.a_fazer)
+        self.assertFalse(self.status())
+
+    def test_excluir_o_card_pendente_conclui_o_projeto(self):
+        self.criar(self.concluido)
+        pendente = self.criar(self.a_fazer)
+        self.assertFalse(self.status())
+        self.client.delete(f"/api/cards/{pendente}/")
+        self.assertTrue(self.status())
+
+    def test_excluir_o_ultimo_card_tira_o_status(self):
+        card = self.criar(self.concluido)
+        self.assertTrue(self.status())
+        self.client.delete(f"/api/cards/{card}/")
+        self.assertFalse(self.status())
+
+    def test_status_vai_no_estado_enviado_ao_front(self):
+        self.criar(self.concluido)
+        quadro = self.client.get("/api/estado/").json()["quadros"][0]
+        self.assertTrue(quadro["concluido"])
+

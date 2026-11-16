@@ -218,6 +218,20 @@ document.addEventListener("alpine:init", () => {
       } catch (e) { this.falhou(e); } // recarrega: outra pessoa pode ter posto um card na coluna
     },
 
+    // Põe a coluna na `posicao` (0 = primeira). A "Concluído" fica sempre no fim.
+    async moverColuna(quadro, colunaId, posicao) {
+      const coluna = quadro.colunas.find((c) => c.id === colunaId);
+      const comuns = quadro.colunas.filter((c) => !c.concluida && c.id !== colunaId);
+      comuns.splice(posicao, 0, coluna);
+      const concluida = quadro.colunas.filter((c) => c.concluida);
+      // Muda a tela na hora; depois fica com a lista que o servidor devolver.
+      quadro.colunas = [...comuns, ...concluida].map((c, i) => ({ ...c, ordem: i }));
+      try {
+        const r = await api("POST", `/api/colunas/${colunaId}/mover/`, { ordem: posicao });
+        quadro.colunas = r.colunas;
+      } catch (e) { this.falhou(e); }
+    },
+
     // Por que a coluna não pode ser excluída ("" = pode). As mesmas regras são checadas no servidor.
     motivoNaoExcluirColuna(coluna) {
       if (coluna.concluida) return "A coluna “Concluído” não pode ser excluída.";
@@ -460,6 +474,33 @@ document.addEventListener("alpine:init", () => {
           from.insertBefore(item, irmaos[de] || null);
 
           this.k.moverCard(item.dataset.cardId, Number(to.dataset.colunaId), para);
+        },
+      });
+    },
+
+    // Arraste das COLUNAS. Só começa pela alça (.alca-coluna), que só o admin vê.
+    iniciarSortableColunas(el) {
+      let proximo = null; // quem vinha depois da coluna antes do arraste
+      Sortable.create(el, {
+        group: "colunas",            // nome diferente de "kanban": card não cai aqui, coluna não cai na lista de cards
+        draggable: ".kanban-coluna",
+        handle: ".alca-coluna",
+        animation: 200,
+        ghostClass: "coluna-fantasma",
+        // Nunca deixa soltar depois da "Concluído".
+        onMove: (evt) => !(evt.related.classList.contains("coluna-concluida") && evt.willInsertAfter),
+        onStart: (evt) => {
+          arrastando = true;
+          proximo = evt.item.nextSibling;
+        },
+        onEnd: (evt) => {
+          setTimeout(() => (arrastando = false), 50);
+          const { item, from, oldDraggableIndex: de, newDraggableIndex: para } = evt;
+          // Devolve o elemento ao lugar original: quem redesenha é o Alpine.
+          item.remove();
+          from.insertBefore(item, proximo);
+          if (de === para) return;
+          this.k.moverColuna(this.k.quadro, Number(item.dataset.colunaId), para);
         },
       });
     },

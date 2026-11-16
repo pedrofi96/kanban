@@ -3,6 +3,7 @@ Ações que ALTERAM o banco no kanban (membros e histórico).
 """
 
 from django.db import transaction
+from django.utils import timezone
 
 from .models import AtividadeCard, Card, ChecklistItem, Coluna, MembroQuadro, Quadro
 
@@ -20,6 +21,19 @@ def registrar(card, usuario, tipo, descricao):
         tipo=tipo,
         descricao=descricao[:255],
     )
+
+
+def atualizar_status_do_quadro(quadro):
+    """Recalcula e grava se o projeto está concluído: tem pelo menos 1 card e
+    todos estão na coluna "Concluído". Chame sempre que um card for criado,
+    movido de coluna ou excluído. Só grava no banco quando o status muda."""
+    cards = Card.objects.filter(coluna__quadro=quadro)
+    concluido = cards.exists() and not cards.filter(coluna__concluida=False).exists()
+    if concluido != quadro.concluido:
+        quadro.concluido = concluido
+        quadro.concluido_em = timezone.now() if concluido else None
+        quadro.save(update_fields=["concluido", "concluido_em"])
+    return concluido
 
 
 @transaction.atomic
@@ -83,6 +97,29 @@ def _renumerar(quadro):
         coluna.ordem = ordem
     Coluna.objects.bulk_update(colunas, ["ordem"])
 
+@transaction.atomic
+def mover_coluna(coluna, posicao):
+    if coluna.concluida:
+        raise RegraDeColuna("A coluna “Concluído” não pode ser movida.")
+    try:
+        posicao = int(posicao)
+    except (TypeError, ValueError):
+        raise RegraDeColuna("Posição inválida.")
+
+    quadro = coluna.quadro
+    outras = list(
+        quadro.colunas.filter(concluida=False)
+        .exclude(pk=coluna.pk)
+        .order_by("ordem","pk")
+    )
+    posicao = max(0, min(posicao, len(outras)))
+    outras.insert(posicao, coluna)
+
+    for ordem, c in enumerate(outras):
+        c.ordem = ordem
+
+    Coluna.objects.bulk_update(outras, ["ordem"])
+    _renumerar(quadro)
 
 @transaction.atomic
 def criar_coluna(quadro, titulo):

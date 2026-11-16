@@ -177,6 +177,19 @@ def coluna_detalhe(request, coluna_id):
         return JsonResponse({"erro": str(erro)}, status=400)
     return _colunas(quadro)
 
+@api_login_required
+@require_http_methods(["POST"])
+def mover_coluna(request, coluna_id):
+    """Move a coluna para a posição `ordem` (0 = primeira). Devolve a lista de colunas."""
+    coluna = get_object_or_404(Coluna.objects.select_related("quadro"), pk=coluna_id)
+    quadro = coluna.quadro
+    if not permissoes.pode_gerenciar_colunas(request.user, quadro):
+        return _negado()
+    try:
+        services.mover_coluna(coluna, _corpo(request).get("ordem"))
+    except services.RegraDeColuna as erro:
+        return JsonResponse({"erro": str(erro)}, status=400)
+    return _colunas(quadro)
 
 # ---------- Cards ----------
 
@@ -204,6 +217,7 @@ def criar_card(request):
         ordem=proxima,
     )
     services.registrar(card, request.user, AtividadeCard.Tipo.CRIADO, f"criou o card em “{coluna.titulo}”")
+    services.atualizar_status_do_quadro(coluna.quadro)
     return JsonResponse(card.to_dict(), status=201)
 
 
@@ -222,6 +236,7 @@ def card_detalhe(request, card_id):
         if not permissoes.pode_excluir_card(request.user, quadro):
             return JsonResponse({"erro": "Só o administrador do andar pode excluir cards."}, status=403)
         card.delete()
+        services.atualizar_status_do_quadro(quadro)
         return JsonResponse({"ok": True})
 
     corpo = _corpo(request)
@@ -308,6 +323,7 @@ def mover_card(request, card_id):
                 card, request.user, AtividadeCard.Tipo.MOVIDO,
                 f"moveu de “{origem.titulo}” para “{destino.titulo}”",
             )
+            services.atualizar_status_do_quadro(origem.quadro)
 
     return JsonResponse({"ok": True})
 

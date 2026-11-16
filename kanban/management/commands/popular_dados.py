@@ -13,6 +13,7 @@ from datetime import date, timedelta
 from django.core.management.base import BaseCommand
 from django.db import transaction
 
+from kanban import services
 from kanban.models import AtividadeCard, Card, ChecklistItem, MembroQuadro, Quadro
 from usuarios.models import Andar, ConviteTransferencia, Usuario
 
@@ -130,6 +131,7 @@ class Command(BaseCommand):
                 )
                 for i, (texto, feito) in enumerate(checklist):
                     ChecklistItem.objects.create(card=card, texto=texto, feito=feito, ordem=i)
+            services.atualizar_status_do_quadro(quadro)
 
         # ---------- Um convite pendente de exemplo ----------
         ConviteTransferencia.objects.filter(convidado=usuarios["ana"]).delete()

@@ -30,4 +30,5 @@ urlpatterns = [
     path("api/cards/<int:card_id>/atividades/", views.atividades_do_card),
     path("api/cards/<int:card_id>/checklist/", views.criar_item),
     path("api/checklist/<int:item_id>/", views.item_detalhe),
+    path("api/colunas/<int:coluna_id>/mover/", views.mover_coluna),
 ]

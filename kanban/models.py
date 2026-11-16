@@ -26,6 +26,10 @@ class Quadro(models.Model):
         blank=True,
     )
     criado_em = models.DateTimeField(auto_now_add=True)
+    # Status calculado: todos os cards na coluna "Concluído" (e pelo menos 1 card).
+    # Não edite à mão: quem mantém é services.atualizar_status_do_quadro.
+    concluido = models.BooleanField("concluído", default=False, db_index=True, editable=False)
+    concluido_em = models.DateTimeField("concluído em", null=True, blank=True, editable=False)
 
     class Meta:
         ordering = ["id"]
@@ -51,6 +55,7 @@ class Quadro(models.Model):
             "nome": self.nome,
             "andar_id": self.andar_id,
             "andar": str(self.andar),
+            "concluido": self.concluido,
             "membros": [u.to_dict() for u in self.membros.select_related("andar")],
             "colunas": [c.to_dict() for c in colunas],
             "cards": [c.to_dict() for c in cards],

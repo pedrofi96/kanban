@@ -30,8 +30,9 @@ class AtividadeInline(admin.TabularInline):
 
 @admin.register(Quadro)
 class QuadroAdmin(admin.ModelAdmin):
-    list_display = ["nome", "andar", "criado_em"]
-    list_filter = ["andar"]
+    list_display = ["nome", "andar", "concluido", "criado_em"]
+    list_filter = ["andar", "concluido"]
+    readonly_fields = ["concluido", "concluido_em"]
     search_fields = ["nome"]
     inlines = [MembroInline, ColunaInline]
 
