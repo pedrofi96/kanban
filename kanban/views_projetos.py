@@ -124,6 +124,7 @@ def projeto_renomear(request, quadro_id):
     if form.is_valid():
         quadro.nome = form.cleaned_data["nome"]
         quadro.save(update_fields=["nome"])
+        services.avisar_quadro(quadro.pk)
         messages.success(request, "Projeto renomeado.")
     return redirect("projeto_detalhe", quadro.pk)
 
@@ -134,7 +135,9 @@ def projeto_excluir(request, quadro_id):
     quadro = get_object_or_404(Quadro, pk=quadro_id)
     _exigir(permissoes.pode_excluir_quadro(request.user, quadro))
     nome = quadro.nome
+    quadro_id = quadro.pk
     quadro.delete()  # apaga junto colunas, cards, checklist, histórico e membros (CASCADE)
+    services.avisar_quadro(quadro_id)
     messages.success(request, f"Projeto “{nome}” excluído.")
     return redirect("projetos")
 
@@ -149,6 +152,7 @@ def projeto_adicionar_membro(request, quadro_id):
         alvo = form.cleaned_data["usuario"]
         _exigir(permissoes.pode_adicionar_membro(request.user, quadro, alvo))
         services.adicionar_ao_quadro(quadro, alvo, request.user)
+        services.avisar_quadro(quadro.pk)
         messages.success(request, f"{alvo.nome_exibicao} agora participa do projeto.")
     else:
         messages.error(request, "Escolha uma pessoa válida.")
@@ -167,6 +171,7 @@ def projeto_remover_membro(request, quadro_id, usuario_id):
         quadro, alvo, request.user,
         motivo="saiu do projeto" if saindo else f"removido por {request.user.nome_exibicao}",
     )
+    services.avisar_quadro(quadro.pk)
     if saindo:
         messages.success(request, f"Você saiu do projeto “{quadro.nome}”.")
         if not permissoes.pode_ver_quadro(request.user, quadro):

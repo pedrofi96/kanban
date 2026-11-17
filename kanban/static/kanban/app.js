@@ -15,10 +15,15 @@ function csrf() {
   return m ? decodeURIComponent(m[1]) : "";
 }
 
+// Identifica esta aba. Vai no cabeçalho X-Aba de cada pedido; o servidor devolve
+// no aviso do WebSocket e a aba que fez a mudança ignora o próprio aviso.
+// (crypto.randomUUID() só funciona em HTTPS/localhost, por isso Math.random.)
+const ABA = Math.random().toString(36).slice(2) + Date.now().toString(36);
+
 async function api(metodo, url, corpo) {
   const resp = await fetch(url, {
     method: metodo,
-    headers: { "Content-Type": "application/json", "X-CSRFToken": csrf() },
+    headers: { "Content-Type": "application/json", "X-CSRFToken": csrf(), "X-Aba": ABA },
     body: corpo ? JSON.stringify(corpo) : undefined,
   });
   const dados = await resp.json().catch(() => ({}));
@@ -36,6 +41,15 @@ const pendentes = new Map(); // idTemp -> Promise
 
 // Evita que o "click" disparado ao soltar um card abra o modal.
 let arrastando = false;
+
+// Conexão em tempo real (WebSocket) com o quadro aberto.
+const tempoReal = {
+  ws: null,
+  tentativas: 0,              // reconexões seguidas sem sucesso (para esperar cada vez mais)
+  timerReconexao: null,
+  timerRecarga: null,
+  recarregarAoSoltar: false,  // chegou aviso durante um arraste: recarrega quando soltar
+};
 
 document.addEventListener("alpine:init", () => {
   const inicial = JSON.parse(document.getElementById("estado-inicial").textContent);
@@ -134,18 +148,74 @@ document.addEventListener("alpine:init", () => {
     // Rollback: em caso de erro, volta ao que o servidor tem.
     async falhou(erro) {
       this.avisar(erro.message || "Não foi possível salvar. Recarregando dados…");
-      try {
-        const dados = await api("GET", "/api/estado/");
-        this.eu = dados.eu;
-        this.andares = dados.andares;
-        this.quadros = dados.quadros;
-        if (!this.quadro) this.quadroAtualId = this.quadros[0]?.id ?? null;
-      } catch { /* servidor fora do ar */ }
+      await this.buscarEstado();
     },
 
     async idReal(card) {
       if (card._tmp && pendentes.has(card._tmp)) await pendentes.get(card._tmp);
       return card.id;
+    },
+
+    // ---------- Tempo real (WebSocket) ----------
+    // Abre (ou troca) a conexão com o quadro aberto. O WebSocket só AVISA que algo
+    // mudou; os dados vêm sempre pela API, que é onde as permissões são checadas.
+    conectar() {
+      clearTimeout(tempoReal.timerReconexao);
+      if (tempoReal.ws) {
+        tempoReal.ws.onclose = null; // fechamento de propósito: não reconectar
+        tempoReal.ws.close();
+        tempoReal.ws = null;
+      }
+      const id = this.quadroAtualId;
+      if (!id) return;
+
+      const protocolo = location.protocol === "https:" ? "wss" : "ws";
+      const ws = new WebSocket(`${protocolo}://${location.host}/ws/quadros/${id}/`);
+      tempoReal.ws = ws;
+
+      ws.onopen = () => {
+        // Reconectou depois de cair: pode ter perdido avisos nesse meio tempo.
+        if (tempoReal.tentativas > 0) this.recarregar();
+        tempoReal.tentativas = 0;
+      };
+
+      ws.onmessage = (evt) => {
+        let msg;
+        try { msg = JSON.parse(evt.data); } catch { return; }
+        if (msg.tipo === "quadro_mudou" && msg.origem !== ABA) this.recarregar();
+      };
+
+      ws.onclose = () => {
+        if (tempoReal.ws !== ws) return;
+        // Espera 1s, 2s, 4s, 8s... até no máximo 30s entre tentativas.
+        const espera = Math.min(30000, 1000 * 2 ** tempoReal.tentativas++);
+        tempoReal.timerReconexao = setTimeout(() => this.conectar(), espera);
+      };
+    },
+
+    // Vários avisos seguidos viram uma recarga só. Durante um arraste, espera soltar.
+    recarregar() {
+      if (arrastando) { tempoReal.recarregarAoSoltar = true; return; }
+      clearTimeout(tempoReal.timerRecarga);
+      tempoReal.timerRecarga = setTimeout(() => this.buscarEstado(), 300);
+    },
+
+    fimDoArraste() {
+      if (!tempoReal.recarregarAoSoltar) return;
+      tempoReal.recarregarAoSoltar = false;
+      this.recarregar();
+    },
+
+    // Busca tudo de novo no servidor e avisa o componente (para atualizar o modal aberto).
+    async buscarEstado() {
+      try {
+        const dados = await api("GET", "/api/estado/");
+        this.eu = dados.eu;
+        this.andares = dados.andares;
+        this.quadros = dados.quadros;
+        if (!this.quadro) this.quadroAtualId = this.quadrosDoAndar[0]?.id ?? this.quadros[0]?.id ?? null;
+        window.dispatchEvent(new CustomEvent("kanban:recarregado"));
+      } catch { /* servidor fora do ar */ }
     },
 
     // ---------- Quadros ----------
@@ -362,7 +432,11 @@ document.addEventListener("alpine:init", () => {
         this.adicionandoMembro = false;
         this.criandoColuna = false;
         this.colunaEditandoId = null;
+        this.k.conectar(); // passa a ouvir o quadro novo
       });
+      this.k.conectar();
+      // Outra pessoa mudou o quadro e os dados foram recarregados.
+      window.addEventListener("kanban:recarregado", () => this.aposRecarregar());
     },
 
     // Andar padrão do "Novo quadro": o filtrado; senão o meu; senão o primeiro permitido.
@@ -461,7 +535,7 @@ document.addEventListener("alpine:init", () => {
           window.getSelection()?.removeAllRanges();
         },
         onEnd: (evt) => {
-          setTimeout(() => (arrastando = false), 50);
+          setTimeout(() => { arrastando = false; this.k.fimDoArraste(); }, 50);
           document.body.classList.remove("arrastando-card");
           window.getSelection()?.removeAllRanges();
           const { item, from, to, oldDraggableIndex: de, newDraggableIndex: para } = evt;
@@ -494,7 +568,7 @@ document.addEventListener("alpine:init", () => {
           proximo = evt.item.nextSibling;
         },
         onEnd: (evt) => {
-          setTimeout(() => (arrastando = false), 50);
+          setTimeout(() => { arrastando = false; this.k.fimDoArraste(); }, 50);
           const { item, from, oldDraggableIndex: de, newDraggableIndex: para } = evt;
           // Devolve o elemento ao lugar original: quem redesenha é o Alpine.
           item.remove();
@@ -647,6 +721,26 @@ document.addEventListener("alpine:init", () => {
       this.confirmandoFechar = false;
       this.editando = false;
       this.cardAbertoId = null;
+    },
+
+    // Depois de recarregar por aviso do WebSocket: ajusta o modal aberto.
+    aposRecarregar() {
+      if (this.cardAbertoId == null) return;
+      const card = this.cardAberto;
+      if (!card) {
+        // O card foi excluído (ou movido para onde não tenho acesso) por outra pessoa.
+        this.confirmandoExclusao = false;
+        this.confirmandoFechar = false;
+        this.editando = false;
+        this.cardAbertoId = null;
+        this.k.avisar("Este card foi excluído por outra pessoa.");
+        return;
+      }
+      // Só leitura: mostra os dados novos. Editando: mantém o rascunho de quem está digitando.
+      if (!this.editando) {
+        this.rascunho = this.copiaDoCard(card);
+        this.carregarAtividades(card);
+      }
     },
 
     async carregarAtividades(card) {

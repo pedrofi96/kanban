@@ -7,6 +7,15 @@ from django.utils import timezone
 
 from .models import AtividadeCard, Card, ChecklistItem, Coluna, MembroQuadro, Quadro
 
+import logging
+
+from asgiref.sync import async_to_sync
+from channels.layers import get_channel_layer
+
+from .consumers import grupo_do_quadro
+
+logger = logging.getLogger(__name__)
+
 MINIMO_DE_COLUNAS = 3  # contando a "Concluído"
 
 
@@ -177,3 +186,18 @@ def sincronizar_checklist(card, itens):
             item.save()
             mantidos.add(item.pk)
     ChecklistItem.objects.filter(pk__in=set(existentes) - mantidos).delete()
+
+    #--------------------Tempo Real ----------------------#
+
+def avisar_quadro(quadro_id, origem = None):
+
+    def enviar():
+        try:
+            async_to_sync(get_channel_layer().group_send)(
+                grupo_do_quadro(quadro_id),
+                {"type":"quadro.mudou", "origem": origem}
+            )
+        except Exception:
+            logger.exception("Não foi possível avisar o quadro %s", quadro_id)
+
+    transaction.on_commit(enviar)

@@ -49,6 +49,8 @@ def _data(texto):
     """Converte "2026-11-30" em date. Vazio vira None; formato errado levanta ValueError."""
     return date.fromisoformat(texto) if texto else None
 
+def _avisar(request, quadro):
+    services.avisar_quadro(quadro.pk, origem=request.headers.get("X-Aba"))
 
 def _quadro_dict(quadro, usuario):
     dados = quadro.to_dict()
@@ -114,6 +116,7 @@ def sair_do_quadro(request, quadro_id):
     if not permissoes.pode_remover_membro(request.user, quadro, request.user):
         return _negado()
     services.remover_do_quadro(quadro, request.user, request.user, motivo="saiu do projeto")
+    _avisar(request, quadro)
     return JsonResponse({"ok": True, "ainda_ve": permissoes.pode_ver_quadro(request.user, quadro)})
 
 
@@ -138,6 +141,7 @@ def membros_do_quadro(request, quadro_id):
     if alvo is None or not permissoes.pode_adicionar_membro(request.user, quadro, alvo):
         return JsonResponse({"erro": "Não foi possível adicionar essa pessoa."}, status=400)
     services.adicionar_ao_quadro(quadro, alvo, request.user)
+    _avisar(request, quadro)
     return JsonResponse(_quadro_dict(quadro, request.user))
 
 
@@ -158,6 +162,7 @@ def criar_coluna(request, quadro_id):
         services.criar_coluna(quadro, _corpo(request).get("titulo"))
     except services.RegraDeColuna as erro:
         return JsonResponse({"erro": str(erro)}, status=400)
+    _avisar(request, quadro)
     return _colunas(quadro)
 
 
@@ -175,6 +180,7 @@ def coluna_detalhe(request, coluna_id):
             services.renomear_coluna(coluna, _corpo(request).get("titulo"))
     except services.RegraDeColuna as erro:
         return JsonResponse({"erro": str(erro)}, status=400)
+    _avisar(request, quadro)
     return _colunas(quadro)
 
 @api_login_required
@@ -185,10 +191,13 @@ def mover_coluna(request, coluna_id):
     quadro = coluna.quadro
     if not permissoes.pode_gerenciar_colunas(request.user, quadro):
         return _negado()
+
     try:
         services.mover_coluna(coluna, _corpo(request).get("ordem"))
     except services.RegraDeColuna as erro:
         return JsonResponse({"erro": str(erro)}, status=400)
+
+    _avisar(request, quadro)
     return _colunas(quadro)
 
 # ---------- Cards ----------
@@ -218,6 +227,7 @@ def criar_card(request):
     )
     services.registrar(card, request.user, AtividadeCard.Tipo.CRIADO, f"criou o card em “{coluna.titulo}”")
     services.atualizar_status_do_quadro(coluna.quadro)
+    _avisar(request, coluna.quadro)
     return JsonResponse(card.to_dict(), status=201)
 
 
@@ -237,6 +247,7 @@ def card_detalhe(request, card_id):
             return JsonResponse({"erro": "Só o administrador do andar pode excluir cards."}, status=403)
         card.delete()
         services.atualizar_status_do_quadro(quadro)
+        _avisar(request, quadro)
         return JsonResponse({"ok": True})
 
     corpo = _corpo(request)
@@ -275,12 +286,12 @@ def card_detalhe(request, card_id):
                     if novo_responsavel else "removeu o responsável"
                 )
                 services.registrar(card, request.user, AtividadeCard.Tipo.RESPONSAVEL, descricao)
-
             for campo, valor in dados.items():
                 setattr(card, campo, valor)
             card.save()
     except ValueError:
         return JsonResponse({"erro": "Checklist inválido."}, status=400)
+    _avisar(request, quadro)
     return JsonResponse(card.to_dict())
 
 
@@ -324,7 +335,7 @@ def mover_card(request, card_id):
                 f"moveu de “{origem.titulo}” para “{destino.titulo}”",
             )
             services.atualizar_status_do_quadro(origem.quadro)
-
+    _avisar(request, card.coluna.quadro)
     return JsonResponse({"ok": True})
 
 
